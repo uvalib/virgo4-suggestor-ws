@@ -66,7 +66,7 @@ func main() {
 	portStr := fmt.Sprintf(":%s", svc.config.listenPort)
 */
 
-	portStr := fmt.Sprintf(":%s", "8641")
+	portStr := fmt.Sprintf(":%s", "8080")
 	log.Printf("Start service on %s", portStr)
 
 	log.Fatal(router.Run(portStr))
