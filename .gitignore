@@ -1,0 +1,12 @@
+.DS_Store
+bin/
+dist/
+log/
+tmp/
+env.*
+*.dev
+*.log
+*.bak
+*.swp
+*~
+.idea
