@@ -81,7 +81,7 @@ func buildVersion() string {
 		return strings.Replace(files[0], "buildtag.", "", 1)
 	}
 
-	return "unknown"
+	return "missing"
 }
 
 func versionHandler(c *gin.Context) {
