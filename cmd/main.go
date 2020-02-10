@@ -1,23 +1,18 @@
 package main
 
 import (
-	"path/filepath"
 	"fmt"
 	"log"
-	"net/http"
-	"runtime"
-	"strings"
 
 	"github.com/gin-contrib/cors"
-	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	ginprometheus "github.com/zsais/go-gin-prometheus"
 )
 
-// git commit used for this build; supplied at compile time
-var gitCommit string
+// GitCommit is the git commit for this build; supplied at compile time
+var GitCommit string
 
 /**
  * Main entry point for the web service
@@ -25,17 +20,13 @@ var gitCommit string
 func main() {
 	log.Printf("===> virgo4-suggestor-ws starting up <===")
 
-/*
-	cfg := loadConfig()
-	svc := initializeService(cfg)
-*/
+	cfg := LoadConfiguration()
+	svc := InitializeService(cfg)
 
 	gin.SetMode(gin.ReleaseMode)
 	//gin.DisableConsoleColor()
 
 	router := gin.Default()
-
-	router.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	corsCfg := cors.DefaultConfig()
 	corsCfg.AllowAllOrigins = true
@@ -53,74 +44,21 @@ func main() {
 		h.ServeHTTP(c.Writer, c.Request)
 	})
 
-	router.GET("/favicon.ico", ignoreHandler)
+	router.GET("/favicon.ico", svc.IgnoreHandler)
 
-	router.GET("/version", versionHandler)
-	router.GET("/healthcheck", healthCheckHandler)
+	router.GET("/version", svc.VersionHandler)
+	router.GET("/healthcheck", svc.HealthCheckHandler)
 
-/*
-	if api := router.Group("/api"); api != nil {
-		api.POST("/suggest", svc.authenticateHandler, svc.suggestHandler)
-	}
+	/*
+		if api := router.Group("/api"); api != nil {
+			api.POST("/suggest", svc.authenticateHandler, svc.suggestHandler)
+		}
 
-	portStr := fmt.Sprintf(":%s", svc.config.listenPort)
-*/
+		portStr := fmt.Sprintf(":%s", svc.config.listenPort)
+	*/
 
-	portStr := fmt.Sprintf(":%s", "8080")
+	portStr := fmt.Sprintf(":%s", cfg.ListenPort)
 	log.Printf("Start service on %s", portStr)
 
 	log.Fatal(router.Run(portStr))
-}
-
-func ignoreHandler(c *gin.Context) {
-}
-
-func buildVersion() string {
-	files, _ := filepath.Glob("buildtag.*")
-	if len(files) == 1 {
-		return strings.Replace(files[0], "buildtag.", "", 1)
-	}
-
-	return "missing"
-}
-
-func versionHandler(c *gin.Context) {
-	type vResp struct {
-		BuildVersion string `json:"build,omitempty"`
-		GoVersion    string `json:"go_version,omitempty"`
-		GitCommit    string `json:"git_commit,omitempty"`
-	}
-
-	ver := vResp {
-		BuildVersion: buildVersion(),
-		GoVersion:    fmt.Sprintf("%s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH),
-		GitCommit:    gitCommit,
-    }
-
-	c.JSON(http.StatusOK, ver)
-}
-
-func healthCheckHandler(c *gin.Context) {
-	type hcResp struct {
-		Healthy bool   `json:"healthy"`
-		Message string `json:"message,omitempty"`
-	}
-
-	hcMap := make(map[string]hcResp)
-
-	hcSolr := hcResp{}
-
-	status := http.StatusOK
-	hcSolr = hcResp{Healthy: true}
-
-/*
-	if err := s.handlePingRequest(); err != nil {
-		status = http.StatusInternalServerError
-		hcSolr = hcResp{Healthy: false, Message: err.Error()}
-	}
-*/
-
-	hcMap["solr"] = hcSolr
-
-	c.JSON(status, hcMap)
 }

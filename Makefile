@@ -44,7 +44,7 @@ GOLINK_linux =
 # extra flags
 GOENV_EXTRA = GOARCH=amd64
 GOFLAGS_EXTRA =
-GOLINK_EXTRA = -X main.gitCommit=$(GIT_COMMIT)
+GOLINK_EXTRA = -X main.GitCommit=$(GIT_COMMIT)
 
 # default target:
 
