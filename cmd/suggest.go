@@ -1,17 +1,20 @@
 package main
 
 import (
-//	"errors"
+	"errors"
 //	"fmt"
 //	"sort"
 //	"strconv"
 //	"strings"
 //	"time"
+	"github.com/uvalib/virgo4-parser/v4parser"
 )
 
 // SuggestionContext contains data specific to this suggestion request
 type SuggestionContext struct {
 	svc *ServiceContext
+	parser v4parser.SolrParser
+	query string
 }
 
 // Suggestion contains data for a single suggestion
@@ -36,14 +39,25 @@ func InitializeSuggestion(svc *ServiceContext) *SuggestionContext {
 
 // Validate ensures that the incoming query is handled by this service
 func (s *SuggestionContext) Validate() error {
-	// FIXME
-	return nil
+	if _, err := v4parser.ConvertToSolrWithParser(&s.parser, s.query); err != nil {
+		return err
+	}
+
+	total := len(s.parser.FieldValues)
+
+	// currently only handle single-keyword searches
+
+	if total == 1 && len(s.parser.FieldValues["keyword"]) == 1 {
+		return nil
+	}
+
+	return errors.New("unhandled query")
 }
 
 // HandleSuggestionRequest takes a keyword query and tries to find suggested searches
 // based on it.  Errors result in empty suggestions.
 func (s *SuggestionContext) HandleSuggestionRequest() *SuggestionResponse {
-	res := &SuggestionResponse{}
+	res := &SuggestionResponse{ Suggestions: []Suggestion{} }
 
 	var err error
 
