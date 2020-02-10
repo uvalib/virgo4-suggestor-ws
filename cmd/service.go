@@ -70,3 +70,13 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 
 	c.JSON(status, hcMap)
 }
+
+// SuggestionHandler takes a keyword search and suggests alternate searches
+// that may provide better or more focused results
+func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
+	s := InitializeSuggestion(svc)
+
+	suggestions := s.HandleSuggestionRequest()
+
+	c.JSON(http.StatusOK, suggestions)
+}

@@ -49,13 +49,9 @@ func main() {
 	router.GET("/version", svc.VersionHandler)
 	router.GET("/healthcheck", svc.HealthCheckHandler)
 
-	/*
-		if api := router.Group("/api"); api != nil {
-			api.POST("/suggest", svc.authenticateHandler, svc.suggestHandler)
-		}
-
-		portStr := fmt.Sprintf(":%s", svc.config.listenPort)
-	*/
+	if api := router.Group("/api"); api != nil {
+		api.POST("/suggest", svc.SuggestionHandler)
+	}
 
 	portStr := fmt.Sprintf(":%s", cfg.ListenPort)
 	log.Printf("Start service on %s", portStr)
