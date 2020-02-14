@@ -7,12 +7,13 @@ import (
 
 // ServiceConfig defines all of the service configuration parameters
 type ServiceConfig struct {
-	ListenPort      string
-	SolrHost        string
-	SolrCore        string
-	SolrHandler     string
-	SolrConnTimeout string
-	SolrReadTimeout string
+	ListenPort         string
+	SolrHost           string
+	SolrCore           string
+	SolrHandler        string
+	SolrConnTimeout    string
+	SolrReadTimeout    string
+	SolrScoreThreshold string
 }
 
 func ensureSet(env string) string {
@@ -51,13 +52,15 @@ func LoadConfiguration() *ServiceConfig {
 	cfg.SolrHandler = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_HANDLER")
 	cfg.SolrConnTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_CONN_TIMEOUT")
 	cfg.SolrReadTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_READ_TIMEOUT")
+	cfg.SolrScoreThreshold = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_SCORE_THRESHOLD")
 
-	log.Printf("[CONFIG] ListenPort        = [%s]", cfg.ListenPort)
-	log.Printf("[CONFIG] SolrHost          = [%s]", cfg.SolrHost)
-	log.Printf("[CONFIG] SolrCore          = [%s]", cfg.SolrCore)
-	log.Printf("[CONFIG] SolrHandler       = [%s]", cfg.SolrHandler)
-	log.Printf("[CONFIG] SolrConnTimeout   = [%s]", cfg.SolrConnTimeout)
-	log.Printf("[CONFIG] SolrReadTimeout   = [%s]", cfg.SolrReadTimeout)
+	log.Printf("[CONFIG] ListenPort         = [%s]", cfg.ListenPort)
+	log.Printf("[CONFIG] SolrHost           = [%s]", cfg.SolrHost)
+	log.Printf("[CONFIG] SolrCore           = [%s]", cfg.SolrCore)
+	log.Printf("[CONFIG] SolrHandler        = [%s]", cfg.SolrHandler)
+	log.Printf("[CONFIG] SolrConnTimeout    = [%s]", cfg.SolrConnTimeout)
+	log.Printf("[CONFIG] SolrReadTimeout    = [%s]", cfg.SolrReadTimeout)
+	log.Printf("[CONFIG] SolrScoreThreshold = [%s]", cfg.SolrScoreThreshold)
 
 	return &cfg
 }

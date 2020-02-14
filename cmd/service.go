@@ -3,22 +3,79 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
+// SolrContext contains data related to the Solr API connection
+type SolrContext struct {
+	client         *http.Client
+	url            string
+	scoreThreshold float32
+}
+
 // ServiceContext contains common data used by all handlers
 type ServiceContext struct {
+	config *ServiceConfig
+	solr   *SolrContext
+}
+
+func timeoutWithMinimum(str string, min int) int {
+	val, err := strconv.Atoi(str)
+
+	// fallback for invalid or nonsensical timeout values
+	if err != nil || val < min {
+		val = min
+	}
+
+	return val
 }
 
 // InitializeService will initialize the service context based on the config parameters.
 func InitializeService(cfg *ServiceConfig) *ServiceContext {
 	log.Printf("Initializing Service")
-	svc := ServiceContext{}
+
+	connTimeout := timeoutWithMinimum(cfg.SolrConnTimeout, 5)
+	readTimeout := timeoutWithMinimum(cfg.SolrReadTimeout, 5)
+
+	solrClient := &http.Client{
+		Timeout: time.Duration(readTimeout) * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   time.Duration(connTimeout) * time.Second,
+				KeepAlive: 60 * time.Second,
+			}).DialContext,
+			MaxIdleConns:        100, // we are hitting one solr host, so
+			MaxIdleConnsPerHost: 100, // these two values can be the same
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
+	scoreThreshold := float32(100.0)
+
+	if score, err := strconv.ParseFloat(cfg.SolrScoreThreshold, 32); err == nil && score >= 0.0 {
+		scoreThreshold = float32(score)
+	}
+
+	solr := SolrContext{
+		url:            fmt.Sprintf("%s/%s/%s", cfg.SolrHost, cfg.SolrCore, cfg.SolrHandler),
+		client:         solrClient,
+		scoreThreshold: scoreThreshold,
+	}
+
+	svc := ServiceContext{
+		config: cfg,
+		solr:   &solr,
+	}
+
+	log.Printf("[SERVICE] solr.url = [%s]", svc.solr.url)
 
 	return &svc
 }
@@ -75,6 +132,12 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 // that may provide better or more focused results
 func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
 	s := InitializeSuggestion(svc)
+
+	if err := c.BindJSON(&s.req); err != nil {
+		log.Printf("SuggestionHandler: invalid request: %s", err.Error())
+		c.String(http.StatusBadRequest, "Invalid request")
+		return
+	}
 
 	suggestions := s.HandleSuggestionRequest()
 
