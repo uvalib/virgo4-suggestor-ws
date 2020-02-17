@@ -2,8 +2,12 @@ package main
 
 import (
 	"errors"
+	"log"
+	"math"
+	"sort"
 
 	"github.com/uvalib/virgo4-parser/v4parser"
+	"gonum.org/v1/gonum/stat"
 )
 
 // SuggestionContext contains data specific to this suggestion request
@@ -59,11 +63,11 @@ func (s *SuggestionContext) ParseQuery() error {
 
 // HandleSuggestionRequest takes a keyword query and tries to find suggested searches
 // based on it.  Errors result in empty suggestions.
-func (s *SuggestionContext) HandleSuggestionRequest() *SuggestionResponse {
+func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
 	if err := s.ParseQuery(); err != nil {
-		return res
+		return res, err
 	}
 
 	solrReq := SolrRequest{}
@@ -71,26 +75,49 @@ func (s *SuggestionContext) HandleSuggestionRequest() *SuggestionResponse {
 	solrReq.json.Params = SolrRequestParams{
 		Debug:   false,
 		Start:   0,
-		Rows:    10,
-		Qt:      "dismax_ac",
+		Rows:    1000,
+		DefType: "edismax",
 		Fl:      []string{"phrase", "score"},
-		Fq:      []string{"type:author_suggest"},
 		Q:       s.parsedQuery,
+		Qf:      s.svc.config.SolrQf,
 		Sort:    "score desc",
-		ACMatch: "true",
-		ACSpell: "true",
 	}
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
-		return res
+		return res, err
 	}
+
+	scores := []float64{}
 
 	for _, doc := range solrRes.Response.Docs {
-		if doc.Score > s.svc.solr.scoreThreshold {
-			res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: doc.Phrase})
-		}
+		//		log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
+		scores = append(scores, doc.Score)
 	}
 
-	return res
+	sort.Float64s(scores)
+
+	mean := stat.Mean(scores, nil)
+	median := stat.Quantile(0.5, stat.Empirical, scores, nil)
+	variance := stat.Variance(scores, nil)
+	stddev := math.Sqrt(variance)
+	cutoff := mean + 3*stddev
+
+	log.Printf("len      : %v", len(scores))
+	log.Printf("mean     : %v", mean)
+	log.Printf("median   : %v", median)
+	log.Printf("variance : %v", variance)
+	log.Printf("stddev   : %v", stddev)
+	log.Printf("cutoff   : %v", cutoff)
+
+	for _, doc := range solrRes.Response.Docs {
+		if doc.Score < cutoff || len(res.Suggestions) >= s.svc.maxSuggestions {
+			break
+		}
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: doc.Phrase})
+	}
+
+	log.Printf("suggest  : %v", len(res.Suggestions))
+
+	return res, nil
 }

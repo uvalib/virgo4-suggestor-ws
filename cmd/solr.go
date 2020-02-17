@@ -14,15 +14,12 @@ import (
 type SolrRequestParams struct {
 	Debug   bool     `json:"debug,omitempty"`
 	DefType string   `json:"defType,omitempty"`
-	Qt      string   `json:"qt,omitempty"`
 	Start   int      `json:"start"`
 	Rows    int      `json:"rows"`
 	Fl      []string `json:"fl,omitempty"`
-	Fq      []string `json:"fq,omitempty"`
 	Q       string   `json:"q,omitempty"`
+	Qf      string   `json:"qf,omitempty"`
 	Sort    string   `json:"sort,omitempty"`
-	ACMatch string   `json:"ac_matchFullWords,omitempty"`
-	ACSpell string   `json:"ac_spellcheck,omitempty"`
 }
 
 // SolrRequestJSON contains the data for a JSON Solr API request
@@ -45,7 +42,7 @@ type SolrResponseHeader struct {
 
 // SolrDocument is a single result record for a Solr request
 type SolrDocument struct {
-	Score  float32 `json:"score,omitempty"`
+	Score  float64 `json:"score,omitempty"`
 	Phrase string  `json:"phrase,omitempty"`
 }
 
@@ -53,7 +50,7 @@ type SolrDocument struct {
 type SolrResponseDocuments struct {
 	NumFound int            `json:"numFound,omitempty"`
 	Start    int            `json:"start,omitempty"`
-	MaxScore float32        `json:"maxScore,omitempty"`
+	MaxScore float64        `json:"maxScore,omitempty"`
 	Docs     []SolrDocument `json:"docs,omitempty"`
 }
 
@@ -104,22 +101,17 @@ func (s *SuggestionContext) SolrQuery(solrReq *SolrRequest) (*SolrResponse, erro
 		q.Add("q", solrReq.json.Params.Q)
 		q.Add("start", fmt.Sprintf("%d", solrReq.json.Params.Start))
 		q.Add("rows", fmt.Sprintf("%d", solrReq.json.Params.Rows))
-		q.Add("qt", solrReq.json.Params.Qt)
 		q.Add("sort", solrReq.json.Params.Sort)
-		q.Add("ac_matchFullWords", solrReq.json.Params.ACMatch)
-		q.Add("ac_spellcheck", solrReq.json.Params.ACSpell)
+		q.Add("defType", solrReq.json.Params.DefType)
+		q.Add("qf", solrReq.json.Params.Qf)
 
 		for _, val := range solrReq.json.Params.Fl {
 			q.Add("fl", val)
 		}
 
-		for _, val := range solrReq.json.Params.Fq {
-			q.Add("fq", val)
-		}
-
 		req.URL.RawQuery = q.Encode()
 
-		log.Printf("[SOLR] %s req: [%s]", reqType, req.URL.RawQuery)
+		log.Printf("[SOLR] %s req: [%s?%s]", reqType, s.svc.solr.url, req.URL.RawQuery)
 	}
 
 	start := time.Now()

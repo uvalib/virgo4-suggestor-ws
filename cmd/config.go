@@ -7,13 +7,14 @@ import (
 
 // ServiceConfig defines all of the service configuration parameters
 type ServiceConfig struct {
-	ListenPort         string
-	SolrHost           string
-	SolrCore           string
-	SolrHandler        string
-	SolrConnTimeout    string
-	SolrReadTimeout    string
-	SolrScoreThreshold string
+	ListenPort      string
+	SolrHost        string
+	SolrCore        string
+	SolrHandler     string
+	SolrConnTimeout string
+	SolrReadTimeout string
+	SolrQf          string
+	MaxSuggestions  string
 }
 
 func ensureSet(env string) string {
@@ -52,15 +53,17 @@ func LoadConfiguration() *ServiceConfig {
 	cfg.SolrHandler = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_HANDLER")
 	cfg.SolrConnTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_CONN_TIMEOUT")
 	cfg.SolrReadTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_READ_TIMEOUT")
-	cfg.SolrScoreThreshold = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_SCORE_THRESHOLD")
+	cfg.SolrQf = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_QF")
+	cfg.MaxSuggestions = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_MAX_SUGGESTIONS")
 
-	log.Printf("[CONFIG] ListenPort         = [%s]", cfg.ListenPort)
-	log.Printf("[CONFIG] SolrHost           = [%s]", cfg.SolrHost)
-	log.Printf("[CONFIG] SolrCore           = [%s]", cfg.SolrCore)
-	log.Printf("[CONFIG] SolrHandler        = [%s]", cfg.SolrHandler)
-	log.Printf("[CONFIG] SolrConnTimeout    = [%s]", cfg.SolrConnTimeout)
-	log.Printf("[CONFIG] SolrReadTimeout    = [%s]", cfg.SolrReadTimeout)
-	log.Printf("[CONFIG] SolrScoreThreshold = [%s]", cfg.SolrScoreThreshold)
+	log.Printf("[CONFIG] ListenPort      = [%s]", cfg.ListenPort)
+	log.Printf("[CONFIG] SolrHost        = [%s]", cfg.SolrHost)
+	log.Printf("[CONFIG] SolrCore        = [%s]", cfg.SolrCore)
+	log.Printf("[CONFIG] SolrHandler     = [%s]", cfg.SolrHandler)
+	log.Printf("[CONFIG] SolrConnTimeout = [%s]", cfg.SolrConnTimeout)
+	log.Printf("[CONFIG] SolrReadTimeout = [%s]", cfg.SolrReadTimeout)
+	log.Printf("[CONFIG] SolrQf          = [%s]", cfg.SolrQf)
+	log.Printf("[CONFIG] MaxSuggestions  = [%s]", cfg.MaxSuggestions)
 
 	return &cfg
 }

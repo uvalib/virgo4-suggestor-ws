@@ -16,21 +16,21 @@ import (
 
 // SolrContext contains data related to the Solr API connection
 type SolrContext struct {
-	client         *http.Client
-	url            string
-	scoreThreshold float32
+	client *http.Client
+	url    string
 }
 
 // ServiceContext contains common data used by all handlers
 type ServiceContext struct {
-	config *ServiceConfig
-	solr   *SolrContext
+	config         *ServiceConfig
+	solr           *SolrContext
+	maxSuggestions int
 }
 
-func timeoutWithMinimum(str string, min int) int {
+func integerWithMinimum(str string, min int) int {
 	val, err := strconv.Atoi(str)
 
-	// fallback for invalid or nonsensical timeout values
+	// fallback for invalid or nonsensical values
 	if err != nil || val < min {
 		val = min
 	}
@@ -42,8 +42,8 @@ func timeoutWithMinimum(str string, min int) int {
 func InitializeService(cfg *ServiceConfig) *ServiceContext {
 	log.Printf("Initializing Service")
 
-	connTimeout := timeoutWithMinimum(cfg.SolrConnTimeout, 5)
-	readTimeout := timeoutWithMinimum(cfg.SolrReadTimeout, 5)
+	connTimeout := integerWithMinimum(cfg.SolrConnTimeout, 5)
+	readTimeout := integerWithMinimum(cfg.SolrReadTimeout, 5)
 
 	solrClient := &http.Client{
 		Timeout: time.Duration(readTimeout) * time.Second,
@@ -58,21 +58,15 @@ func InitializeService(cfg *ServiceConfig) *ServiceContext {
 		},
 	}
 
-	scoreThreshold := float32(100.0)
-
-	if score, err := strconv.ParseFloat(cfg.SolrScoreThreshold, 32); err == nil && score >= 0.0 {
-		scoreThreshold = float32(score)
-	}
-
 	solr := SolrContext{
-		url:            fmt.Sprintf("%s/%s/%s", cfg.SolrHost, cfg.SolrCore, cfg.SolrHandler),
-		client:         solrClient,
-		scoreThreshold: scoreThreshold,
+		url:    fmt.Sprintf("%s/%s/%s", cfg.SolrHost, cfg.SolrCore, cfg.SolrHandler),
+		client: solrClient,
 	}
 
 	svc := ServiceContext{
-		config: cfg,
-		solr:   &solr,
+		config:         cfg,
+		solr:           &solr,
+		maxSuggestions: integerWithMinimum(cfg.MaxSuggestions, 1),
 	}
 
 	log.Printf("[SERVICE] solr.url = [%s]", svc.solr.url)
@@ -116,12 +110,13 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 	status := http.StatusOK
 	hcSolr = hcResp{Healthy: true}
 
-	/*
-		if err := s.handlePingRequest(); err != nil {
-			status = http.StatusInternalServerError
-			hcSolr = hcResp{Healthy: false, Message: err.Error()}
-		}
-	*/
+	s := InitializeSuggestion(svc)
+	s.req.Query = "keyword:{pingtest}"
+
+	if _, err := s.HandleSuggestionRequest(); err != nil {
+		status = http.StatusInternalServerError
+		hcSolr = hcResp{Healthy: false, Message: err.Error()}
+	}
 
 	hcMap["solr"] = hcSolr
 
@@ -139,7 +134,7 @@ func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
 		return
 	}
 
-	suggestions := s.HandleSuggestionRequest()
+	suggestions, _ := s.HandleSuggestionRequest()
 
 	c.JSON(http.StatusOK, suggestions)
 }
