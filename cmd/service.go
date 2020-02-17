@@ -110,6 +110,7 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 	status := http.StatusOK
 	hcSolr = hcResp{Healthy: true}
 
+/*
 	s := InitializeSuggestion(svc)
 	s.req.Query = "keyword:{pingtest}"
 
@@ -117,6 +118,7 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 		status = http.StatusInternalServerError
 		hcSolr = hcResp{Healthy: false, Message: err.Error()}
 	}
+*/
 
 	hcMap["solr"] = hcSolr
 
