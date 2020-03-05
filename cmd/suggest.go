@@ -85,6 +85,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
+		// core not ready?  mock a response
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Jefferson, Thomas"})
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Poe, Edgar Allan"})
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Unsworth, John"})
 		return res, err
 	}
 
