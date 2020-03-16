@@ -54,7 +54,17 @@ func (s *SuggestionContext) ParseQuery() error {
 	// currently only handle single-keyword searches
 
 	if total == 1 && len(s.parser.FieldValues["keyword"]) == 1 {
-		s.parsedQuery = s.parser.FieldValues["keyword"][0]
+
+		// and the keyword cannot be some form of a * query
+
+		keyword := s.parser.FieldValues["keyword"][0]
+
+		if keyword == "" || keyword == "*" {
+			return errors.New("ignoring blank/* keyword query")
+		}
+
+		s.parsedQuery = keyword
+
 		return nil
 	}
 
@@ -85,17 +95,13 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
-		// core not ready?  mock a response
-		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Jefferson, Thomas"})
-		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Poe, Edgar Allan"})
-		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: "Unsworth, John"})
 		return res, err
 	}
 
 	scores := []float64{}
 
 	for _, doc := range solrRes.Response.Docs {
-		//		log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
+		//log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
 		scores = append(scores, doc.Score)
 	}
 

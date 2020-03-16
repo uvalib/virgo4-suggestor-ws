@@ -110,15 +110,15 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 	status := http.StatusOK
 	hcSolr = hcResp{Healthy: true}
 
-/*
-	s := InitializeSuggestion(svc)
-	s.req.Query = "keyword:{pingtest}"
+	/*
+		s := InitializeSuggestion(svc)
+		s.req.Query = "keyword:{pingtest}"
 
-	if _, err := s.HandleSuggestionRequest(); err != nil {
-		status = http.StatusInternalServerError
-		hcSolr = hcResp{Healthy: false, Message: err.Error()}
-	}
-*/
+		if _, err := s.HandleSuggestionRequest(); err != nil {
+			status = http.StatusInternalServerError
+			hcSolr = hcResp{Healthy: false, Message: err.Error()}
+		}
+	*/
 
 	hcMap["solr"] = hcSolr
 
@@ -136,7 +136,11 @@ func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
 		return
 	}
 
-	suggestions, _ := s.HandleSuggestionRequest()
+	suggestions, err := s.HandleSuggestionRequest()
+
+	if err != nil {
+		log.Printf("ERROR: %s", err.Error())
+	}
 
 	c.JSON(http.StatusOK, suggestions)
 }
