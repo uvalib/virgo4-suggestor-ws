@@ -79,21 +79,21 @@ func (s *SuggestionContext) SolrQuery(solrReq *SolrRequest) (*SolrResponse, erro
 		jsonBytes, jsonErr := json.Marshal(solrReq.json)
 		if jsonErr != nil {
 			log.Printf("Marshal() failed: %s", jsonErr.Error())
-			return nil, fmt.Errorf("Failed to marshal Solr JSON")
+			return nil, fmt.Errorf("failed to marshal Solr JSON")
 		}
 
 		log.Printf("[SOLR] %s req: [%s]", reqType, string(jsonBytes))
 
 		if req, reqErr = http.NewRequest(reqType, s.svc.solr.url, bytes.NewBuffer(jsonBytes)); reqErr != nil {
 			log.Printf("NewRequest() failed: %s", reqErr.Error())
-			return nil, fmt.Errorf("Failed to create Solr request")
+			return nil, fmt.Errorf("failed to create Solr request")
 		}
 
 		req.Header.Set("Content-Type", "application/json")
 	} else {
 		if req, reqErr = http.NewRequest(reqType, s.svc.solr.url, nil); reqErr != nil {
 			log.Printf("NewRequest() failed: %s", reqErr.Error())
-			return nil, fmt.Errorf("Failed to create Solr request")
+			return nil, fmt.Errorf("failed to create Solr request")
 		}
 
 		q := req.URL.Query()
@@ -133,7 +133,7 @@ func (s *SuggestionContext) SolrQuery(solrReq *SolrRequest) (*SolrResponse, erro
 
 		log.Printf("client.Do() failed: %s", resErr.Error())
 		log.Printf("ERROR: Failed response from %s %s - %d:%s. Elapsed Time: %d (ms)", reqType, s.svc.solr.url, status, errMsg, elapsedMS)
-		return nil, fmt.Errorf("Failed to receive Solr response")
+		return nil, fmt.Errorf("failed to receive Solr response")
 	}
 
 	log.Printf("[SOLR] http res: %5d ms", int64(time.Since(start)/time.Millisecond))
@@ -152,7 +152,7 @@ func (s *SuggestionContext) SolrQuery(solrReq *SolrRequest) (*SolrResponse, erro
 	if decErr := decoder.Decode(&solrRes); decErr != nil {
 		log.Printf("Decode() failed: %s", decErr.Error())
 		log.Printf("ERROR: Failed response from %s %s - %d:%s. Elapsed Time: %d (ms)", reqType, s.svc.solr.url, http.StatusInternalServerError, decErr.Error(), elapsedMS)
-		return nil, fmt.Errorf("Failed to decode Solr response")
+		return nil, fmt.Errorf("failed to decode Solr response")
 	}
 	log.Printf("[SOLR] json dec: %5d ms", int64(time.Since(start)/time.Millisecond))
 
