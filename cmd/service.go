@@ -14,17 +14,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SolrContext contains data related to the Solr API connection
-type SolrContext struct {
+// ServiceSolrContext contains data related to the Solr API connection
+type ServiceSolrContext struct {
 	client *http.Client
 	url    string
 }
 
+// ServiceSolr contains data related to the Solr API connection
+type ServiceSolr struct {
+	service     ServiceSolrContext
+	healthcheck ServiceSolrContext
+}
+
 // ServiceContext contains common data used by all handlers
 type ServiceContext struct {
-	config         *ServiceConfig
-	solr           *SolrContext
-	maxSuggestions int
+	config *serviceConfig
+	solr   ServiceSolr
 }
 
 func integerWithMinimum(str string, min int) int {
@@ -38,12 +43,9 @@ func integerWithMinimum(str string, min int) int {
 	return val
 }
 
-// InitializeService will initialize the service context based on the config parameters.
-func InitializeService(cfg *ServiceConfig) *ServiceContext {
-	log.Printf("Initializing Service")
-
-	connTimeout := integerWithMinimum(cfg.SolrConnTimeout, 5)
-	readTimeout := integerWithMinimum(cfg.SolrReadTimeout, 5)
+func solrContextFromConfig(host, core string, cfg *serviceConfigSolrClient) ServiceSolrContext {
+	connTimeout := integerWithMinimum(cfg.ConnTimeout, 1)
+	readTimeout := integerWithMinimum(cfg.ReadTimeout, 1)
 
 	solrClient := &http.Client{
 		Timeout: time.Duration(readTimeout) * time.Second,
@@ -58,18 +60,32 @@ func InitializeService(cfg *ServiceConfig) *ServiceContext {
 		},
 	}
 
-	solr := SolrContext{
-		url:    fmt.Sprintf("%s/%s/%s", cfg.SolrHost, cfg.SolrCore, cfg.SolrHandler),
+	ctx := ServiceSolrContext{
+		url:    fmt.Sprintf("%s/%s/%s", host, core, cfg.Endpoint),
 		client: solrClient,
 	}
 
-	svc := ServiceContext{
-		config:         cfg,
-		solr:           &solr,
-		maxSuggestions: integerWithMinimum(cfg.MaxSuggestions, 1),
+	log.Printf("[SERVICE] solr context url = [%s]", ctx.url)
+
+	return ctx
+}
+
+// InitializeService will initialize the service context based on the config parameters.
+func InitializeService(cfg *serviceConfig) *ServiceContext {
+	log.Printf("initializing service")
+
+	svcCtx := solrContextFromConfig(cfg.Solr.Host, cfg.Solr.Core, &cfg.Solr.Clients.Service)
+	hcCtx := solrContextFromConfig(cfg.Solr.Host, cfg.Solr.Core, &cfg.Solr.Clients.HealthCheck)
+
+	solr := ServiceSolr{
+		service:     svcCtx,
+		healthcheck: hcCtx,
 	}
 
-	log.Printf("[SERVICE] solr.url = [%s]", svc.solr.url)
+	svc := ServiceContext{
+		config: cfg,
+		solr:   solr,
+	}
 
 	return &svc
 }
@@ -98,31 +114,56 @@ func (svc *ServiceContext) VersionHandler(c *gin.Context) {
 
 // HealthCheckHandler reports the health of the serivce
 func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
+	s := InitializeSuggestion(svc)
+
+	ping := s.HandlePingRequest()
+
+	// build response
+
+	internalServiceError := false
+
 	type hcResp struct {
 		Healthy bool   `json:"healthy"`
 		Message string `json:"message,omitempty"`
 	}
 
+	hcSolr := hcResp{Healthy: true}
+	if ping != nil {
+		internalServiceError = true
+		hcSolr = hcResp{Healthy: false, Message: ping.Error()}
+	}
+
 	hcMap := make(map[string]hcResp)
+	hcMap["solr"] = hcSolr
 
-	hcSolr := hcResp{}
-
-	status := http.StatusOK
-	hcSolr = hcResp{Healthy: true}
-
-	/*
-		s := InitializeSuggestion(svc)
-		s.req.Query = "keyword:{pingtest}"
-
-		if _, err := s.HandleSuggestionRequest(); err != nil {
-			status = http.StatusInternalServerError
-			hcSolr = hcResp{Healthy: false, Message: err.Error()}
-		}
-	*/
+	hcStatus := http.StatusOK
+	if internalServiceError == true {
+		hcStatus = http.StatusInternalServerError
+	}
 
 	hcMap["solr"] = hcSolr
 
-	c.JSON(status, hcMap)
+	c.JSON(hcStatus, hcMap)
+}
+
+// AuthorSuggestionHandler takes a keyword search and suggests alternate
+// author searches that may provide better or more focused results
+func (svc *ServiceContext) AuthorSuggestionHandler(c *gin.Context) {
+	s := InitializeSuggestion(svc)
+
+	if err := c.BindJSON(&s.req); err != nil {
+		log.Printf("AuthorSuggestionHandler: invalid request: %s", err.Error())
+		c.String(http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	suggestions, err := s.HandleAuthorSuggestionRequest()
+
+	if err != nil {
+		log.Printf("ERROR: %s", err.Error())
+	}
+
+	c.JSON(http.StatusOK, suggestions)
 }
 
 // SuggestionHandler takes a keyword search and suggests alternate searches

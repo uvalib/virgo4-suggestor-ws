@@ -20,7 +20,7 @@ var GitCommit string
 func main() {
 	log.Printf("===> virgo4-suggestor-ws starting up <===")
 
-	cfg := LoadConfiguration()
+	cfg := LoadConfig()
 	svc := InitializeService(cfg)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -51,9 +51,10 @@ func main() {
 
 	if api := router.Group("/api"); api != nil {
 		api.POST("/suggest", svc.SuggestionHandler)
+		api.POST("/suggest/authors", svc.AuthorSuggestionHandler)
 	}
 
-	portStr := fmt.Sprintf(":%s", cfg.ListenPort)
+	portStr := fmt.Sprintf(":%s", cfg.Service.Port)
 	log.Printf("Start service on %s", portStr)
 
 	log.Fatal(router.Run(portStr))
