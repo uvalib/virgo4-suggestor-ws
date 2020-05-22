@@ -43,11 +43,11 @@ func integerWithMinimum(str string, min int) int {
 	return val
 }
 
-func solrContextFromConfig(host, core string, cfg *serviceConfigSolrClient) ServiceSolrContext {
-	connTimeout := integerWithMinimum(cfg.ConnTimeout, 1)
-	readTimeout := integerWithMinimum(cfg.ReadTimeout, 1)
+func httpClientWithTimeouts(conn, read string) *http.Client {
+	connTimeout := integerWithMinimum(conn, 1)
+	readTimeout := integerWithMinimum(read, 1)
 
-	solrClient := &http.Client{
+	client := &http.Client{
 		Timeout: time.Duration(readTimeout) * time.Second,
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
@@ -60,32 +60,35 @@ func solrContextFromConfig(host, core string, cfg *serviceConfigSolrClient) Serv
 		},
 	}
 
-	ctx := ServiceSolrContext{
-		url:    fmt.Sprintf("%s/%s/%s", host, core, cfg.Endpoint),
-		client: solrClient,
-	}
-
-	log.Printf("[SERVICE] solr context url = [%s]", ctx.url)
-
-	return ctx
+	return client
 }
 
 // InitializeService will initialize the service context based on the config parameters.
 func InitializeService(cfg *serviceConfig) *ServiceContext {
 	log.Printf("initializing service")
 
-	svcCtx := solrContextFromConfig(cfg.Solr.Host, cfg.Solr.Core, &cfg.Solr.Clients.Service)
-	hcCtx := solrContextFromConfig(cfg.Solr.Host, cfg.Solr.Core, &cfg.Solr.Clients.HealthCheck)
+	serviceCtx := ServiceSolrContext{
+		url:    fmt.Sprintf("%s/%s/%s", cfg.Solr.Host, cfg.Solr.Core, cfg.Solr.Clients.Service.Endpoint),
+		client: httpClientWithTimeouts(cfg.Solr.Clients.Service.ConnTimeout, cfg.Solr.Clients.Service.ReadTimeout),
+	}
+
+	healthCtx := ServiceSolrContext{
+		url:    fmt.Sprintf("%s/%s/%s", cfg.Solr.Host, cfg.Solr.Core, cfg.Solr.Clients.HealthCheck.Endpoint),
+		client: httpClientWithTimeouts(cfg.Solr.Clients.HealthCheck.ConnTimeout, cfg.Solr.Clients.HealthCheck.ReadTimeout),
+	}
 
 	solr := ServiceSolr{
-		service:     svcCtx,
-		healthcheck: hcCtx,
+		service:     serviceCtx,
+		healthcheck: healthCtx,
 	}
 
 	svc := ServiceContext{
 		config: cfg,
 		solr:   solr,
 	}
+
+	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
+	log.Printf("[SERVICE] solr healthcheck url = [%s]", healthCtx.url)
 
 	return &svc
 }
