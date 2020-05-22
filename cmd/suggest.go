@@ -116,6 +116,8 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 	cutoff := mean + 3*stddev
 
 	log.Printf("len      : %v", len(scores))
+	log.Printf("max      : %v", solrRes.Response.Docs[0].Score)
+	log.Printf("min      : %v", solrRes.Response.Docs[len(solrRes.Response.Docs)-1].Score)
 	log.Printf("mean     : %v", mean)
 	log.Printf("median   : %v", median)
 	log.Printf("variance : %v", variance)
@@ -126,10 +128,11 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 		if doc.Score < cutoff || len(res.Suggestions) >= sugg.Limit {
 			break
 		}
+
 		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: doc.Phrase})
 	}
 
-	log.Printf("suggest  : %v", len(res.Suggestions))
+	log.Printf("authors  : %v", len(res.Suggestions))
 
 	return res, nil
 }
@@ -143,7 +146,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		res.Suggestions = append(res.Suggestions, authors.Suggestions...)
 	}
 
-	log.Printf("suggest  : %v", len(res.Suggestions))
+	log.Printf("overall  : %v", len(res.Suggestions))
 
 	return res, nil
 }
