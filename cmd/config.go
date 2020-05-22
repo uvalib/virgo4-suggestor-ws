@@ -97,6 +97,11 @@ func LoadConfig() *serviceConfig {
 		os.Exit(1)
 	}
 
+	// optional convenience override to simplify terraform config
+	if host := os.Getenv(envPrefix + "_SOLR_HOST"); host != "" {
+		cfg.Solr.Host = host
+	}
+
 	bytes, err := json.Marshal(cfg)
 	if err != nil {
 		log.Printf("error encoding config json: %s", err.Error())
