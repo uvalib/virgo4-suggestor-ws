@@ -1,69 +1,114 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
 	"os"
+	"sort"
+	"strings"
 )
 
-// ServiceConfig defines all of the service configuration parameters
-type ServiceConfig struct {
-	ListenPort      string
-	SolrHost        string
-	SolrCore        string
-	SolrHandler     string
-	SolrConnTimeout string
-	SolrReadTimeout string
-	SolrQf          string
-	MaxSuggestions  string
+const envPrefix = "VIRGO4_SUGGESTOR_WS"
+
+type serviceConfigService struct {
+	Port string `json:"port,omitempty"`
 }
 
-func ensureSet(env string) string {
-	val, set := os.LookupEnv(env)
+type serviceConfigSolrParams struct {
+	DefType string   `json:"deftype,omitempty"`
+	Fl      []string `json:"fl,omitempty"`
+	Fq      []string `json:"fq,omitempty"`
+	Qf      string   `json:"qf,omitempty"`
+	Sort    string   `json:"sort,omitempty"`
+}
 
-	if set == false {
-		log.Printf("environment variable not set: [%s]", env)
+type serviceConfigSuggestion struct {
+	Limit  int                     `json:"limit,omitempty"`
+	Params serviceConfigSolrParams `json:"params,omitempty"`
+}
+
+type serviceConfigSuggestionTypes struct {
+	Author serviceConfigSuggestion `json:"author,omitempty"`
+}
+
+type serviceConfigSolrClient struct {
+	Endpoint    string `json:"endpoint,omitempty"`
+	ConnTimeout string `json:"conn_timeout,omitempty"`
+	ReadTimeout string `json:"read_timeout,omitempty"`
+}
+
+type serviceConfigSolrClients struct {
+	Service     serviceConfigSolrClient `json:"service,omitempty"`
+	HealthCheck serviceConfigSolrClient `json:"healthcheck,omitempty"`
+}
+
+type serviceConfigSolr struct {
+	Host    string                   `json:"host,omitempty"`
+	Core    string                   `json:"core,omitempty"`
+	Clients serviceConfigSolrClients `json:"clients,omitempty"`
+}
+
+type serviceConfig struct {
+	Service     serviceConfigService         `json:"service,omitempty"`
+	Solr        serviceConfigSolr            `json:"solr,omitempty"`
+	Suggestions serviceConfigSuggestionTypes `json:"suggestions,omitempty"`
+}
+
+func getSortedJSONEnvVars() []string {
+	var keys []string
+
+	for _, keyval := range os.Environ() {
+		key := strings.Split(keyval, "=")[0]
+		if strings.HasPrefix(key, envPrefix+"_JSON_") {
+			keys = append(keys, key)
+		}
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+func LoadConfig() *serviceConfig {
+	cfg := serviceConfig{}
+
+	// json configs
+
+	envs := getSortedJSONEnvVars()
+
+	valid := true
+
+	for _, env := range envs {
+		log.Printf("[CONFIG] loading %s ...", env)
+		if val := os.Getenv(env); val != "" {
+			dec := json.NewDecoder(bytes.NewReader([]byte(val)))
+			dec.DisallowUnknownFields()
+
+			if err := dec.Decode(&cfg); err != nil {
+				log.Printf("error decoding %s: %s", env, err.Error())
+				valid = false
+			}
+		}
+	}
+
+	if valid == false {
+		log.Printf("exiting due to json decode error(s) above")
 		os.Exit(1)
 	}
 
-	return val
-}
+	// optional convenience override to simplify terraform config
+	if host := os.Getenv(envPrefix + "_SOLR_HOST"); host != "" {
+		cfg.Solr.Host = host
+	}
 
-func ensureSetAndNonEmpty(env string) string {
-	val := ensureSet(env)
-
-	if val == "" {
-		log.Printf("environment variable set but empty: [%s]", env)
+	bytes, err := json.Marshal(cfg)
+	if err != nil {
+		log.Printf("error encoding config json: %s", err.Error())
 		os.Exit(1)
 	}
 
-	return val
-}
-
-// LoadConfiguration will load the service configuration from env/cmdline
-// and return a pointer to it. Any failures are fatal.
-func LoadConfiguration() *ServiceConfig {
-
-	log.Printf("Loading configuration...")
-
-	var cfg ServiceConfig
-
-	cfg.ListenPort = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_LISTEN_PORT")
-	cfg.SolrHost = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_HOST")
-	cfg.SolrCore = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_CORE")
-	cfg.SolrHandler = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_HANDLER")
-	cfg.SolrConnTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_CONN_TIMEOUT")
-	cfg.SolrReadTimeout = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_READ_TIMEOUT")
-	cfg.SolrQf = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_SOLR_QF")
-	cfg.MaxSuggestions = ensureSetAndNonEmpty("VIRGO4_SUGGESTOR_WS_MAX_SUGGESTIONS")
-
-	log.Printf("[CONFIG] ListenPort      = [%s]", cfg.ListenPort)
-	log.Printf("[CONFIG] SolrHost        = [%s]", cfg.SolrHost)
-	log.Printf("[CONFIG] SolrCore        = [%s]", cfg.SolrCore)
-	log.Printf("[CONFIG] SolrHandler     = [%s]", cfg.SolrHandler)
-	log.Printf("[CONFIG] SolrConnTimeout = [%s]", cfg.SolrConnTimeout)
-	log.Printf("[CONFIG] SolrReadTimeout = [%s]", cfg.SolrReadTimeout)
-	log.Printf("[CONFIG] SolrQf          = [%s]", cfg.SolrQf)
-	log.Printf("[CONFIG] MaxSuggestions  = [%s]", cfg.MaxSuggestions)
+	log.Printf("[CONFIG] composite json:\n%s", string(bytes))
 
 	return &cfg
 }

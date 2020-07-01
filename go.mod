@@ -3,21 +3,16 @@ module github.com/uvalib/virgo4-suggestor-ws
 go 1.13
 
 require (
-	github.com/antlr/antlr4 v0.0.0-20200309161749-1284814c2112 // indirect
 	github.com/gin-contrib/cors v1.3.1
-	github.com/gin-gonic/gin v1.5.0
-	github.com/go-playground/universal-translator v0.17.0 // indirect
-	github.com/golang/protobuf v1.3.5 // indirect
-	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
-	github.com/leodido/go-urn v1.2.0 // indirect
-	github.com/mattn/go-isatty v0.0.12 // indirect
-	github.com/prometheus/client_golang v1.5.1
-	github.com/prometheus/procfs v0.0.10 // indirect
-	github.com/uvalib/virgo4-parser v0.0.0-20200210232429-840aa60f76a5
+	github.com/gin-gonic/gin v1.6.3
+	github.com/go-playground/validator/v10 v10.3.0 // indirect
+	github.com/golang/protobuf v1.4.2 // indirect
+	github.com/prometheus/client_golang v1.6.0
+	github.com/prometheus/common v0.10.0 // indirect
+	github.com/sirupsen/logrus v1.6.0 // indirect
+	github.com/uvalib/virgo4-parser v0.0.0-20200520010212-8579e11e5412
 	github.com/zsais/go-gin-prometheus v0.1.0
-	golang.org/x/sys v0.0.0-20200302150141-5c8b2ff67527 // indirect
+	golang.org/x/sys v0.0.0-20200519105757-fe76b779f299 // indirect
 	gonum.org/v1/gonum v0.7.0
-	gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
-	gopkg.in/yaml.v2 v2.2.8 // indirect
-	honnef.co/go/tools v0.0.1-2020.1.3 // indirect
+	gopkg.in/yaml.v2 v2.3.0 // indirect
 )

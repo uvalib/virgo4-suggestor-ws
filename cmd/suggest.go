@@ -71,9 +71,11 @@ func (s *SuggestionContext) ParseQuery() error {
 	return errors.New("unhandled query")
 }
 
-// HandleSuggestionRequest takes a keyword query and tries to find suggested searches
-// based on it.  Errors result in empty suggestions.
-func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
+// HandleAuthorSuggestionRequest takes a keyword query and tries to find suggested
+// author searches based on it.  Errors result in empty suggestions.
+func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse, error) {
+	sugg := s.svc.config.Suggestions.Author
+
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
 	if err := s.ParseQuery(); err != nil {
@@ -86,11 +88,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		Debug:   false,
 		Start:   0,
 		Rows:    1000,
-		DefType: "edismax",
-		Fl:      []string{"phrase", "score"},
+		DefType: sugg.Params.DefType,
+		Fl:      sugg.Params.Fl,
 		Q:       s.parsedQuery,
-		Qf:      s.svc.config.SolrQf,
-		Sort:    "score desc",
+		Qf:      sugg.Params.Qf,
+		Sort:    sugg.Params.Sort,
 	}
 
 	solrRes, err := s.SolrQuery(&solrReq)
@@ -100,8 +102,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	scores := []float64{}
 
-	for _, doc := range solrRes.Response.Docs {
-		//log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
+	for i, doc := range solrRes.Response.Docs {
+		log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
 		scores = append(scores, doc.Score)
 	}
 
@@ -114,6 +116,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	cutoff := mean + 3*stddev
 
 	log.Printf("len      : %v", len(scores))
+	log.Printf("max      : %v", solrRes.Response.Docs[0].Score)
+	log.Printf("min      : %v", solrRes.Response.Docs[len(solrRes.Response.Docs)-1].Score)
 	log.Printf("mean     : %v", mean)
 	log.Printf("median   : %v", median)
 	log.Printf("variance : %v", variance)
@@ -121,13 +125,33 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	log.Printf("cutoff   : %v", cutoff)
 
 	for _, doc := range solrRes.Response.Docs {
-		if doc.Score < cutoff || len(res.Suggestions) >= s.svc.maxSuggestions {
+		if doc.Score < cutoff || len(res.Suggestions) >= sugg.Limit {
 			break
 		}
+
 		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: doc.Phrase})
 	}
 
-	log.Printf("suggest  : %v", len(res.Suggestions))
+	log.Printf("authors  : %v", len(res.Suggestions))
 
 	return res, nil
+}
+
+// HandleSuggestionRequest takes a keyword query and tries to find suggested searches
+// based on it.  Errors result in empty suggestions.
+func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
+	res := &SuggestionResponse{Suggestions: []Suggestion{}}
+
+	if authors, err := s.HandleAuthorSuggestionRequest(); err == nil {
+		res.Suggestions = append(res.Suggestions, authors.Suggestions...)
+	}
+
+	log.Printf("overall  : %v", len(res.Suggestions))
+
+	return res, nil
+}
+
+// HandlePingRequest sends a ping request to Solr and checks the response.
+func (s *SuggestionContext) HandlePingRequest() error {
+	return s.SolrPing()
 }
