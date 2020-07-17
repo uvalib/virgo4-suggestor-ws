@@ -17,6 +17,7 @@ type SolrRequestParams struct {
 	Start      int      `json:"start"`
 	Rows       int      `json:"rows"`
 	Fl         []string `json:"fl,omitempty"`
+	Fq         []string `json:"fq,omitempty"`
 	Q          string   `json:"q,omitempty"`
 	Qf         string   `json:"qf,omitempty"`
 	Sort       string   `json:"sort,omitempty"`
@@ -80,46 +81,22 @@ func (s *SuggestionContext) SolrQuery(solrReq *SolrRequest) (*SolrResponse, erro
 	var req *http.Request
 	var reqErr error
 
-	reqType := "GET"
+	reqType := "POST"
 
-	if reqType == "POST" {
-		jsonBytes, jsonErr := json.Marshal(solrReq.json)
-		if jsonErr != nil {
-			log.Printf("Marshal() failed: %s", jsonErr.Error())
-			return nil, fmt.Errorf("failed to marshal Solr JSON")
-		}
-
-		log.Printf("[SOLR] %s req: [%s]", reqType, string(jsonBytes))
-
-		if req, reqErr = http.NewRequest(reqType, ctx.url, bytes.NewBuffer(jsonBytes)); reqErr != nil {
-			log.Printf("NewRequest() failed: %s", reqErr.Error())
-			return nil, fmt.Errorf("failed to create Solr request")
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-	} else {
-		if req, reqErr = http.NewRequest(reqType, ctx.url, nil); reqErr != nil {
-			log.Printf("NewRequest() failed: %s", reqErr.Error())
-			return nil, fmt.Errorf("failed to create Solr request")
-		}
-
-		q := req.URL.Query()
-
-		q.Add("q", solrReq.json.Params.Q)
-		q.Add("start", fmt.Sprintf("%d", solrReq.json.Params.Start))
-		q.Add("rows", fmt.Sprintf("%d", solrReq.json.Params.Rows))
-		q.Add("sort", solrReq.json.Params.Sort)
-		q.Add("defType", solrReq.json.Params.DefType)
-		q.Add("qf", solrReq.json.Params.Qf)
-
-		for _, val := range solrReq.json.Params.Fl {
-			q.Add("fl", val)
-		}
-
-		req.URL.RawQuery = q.Encode()
-
-		log.Printf("[SOLR] %s req: [%s?%s]", reqType, ctx.url, req.URL.RawQuery)
+	jsonBytes, jsonErr := json.Marshal(solrReq.json)
+	if jsonErr != nil {
+		log.Printf("Marshal() failed: %s", jsonErr.Error())
+		return nil, fmt.Errorf("failed to marshal Solr JSON")
 	}
+
+	log.Printf("[SOLR] %s req: [%s]", reqType, string(jsonBytes))
+
+	if req, reqErr = http.NewRequest(reqType, ctx.url, bytes.NewBuffer(jsonBytes)); reqErr != nil {
+		log.Printf("NewRequest() failed: %s", reqErr.Error())
+		return nil, fmt.Errorf("failed to create Solr request")
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 
 	start := time.Now()
 	res, resErr := ctx.client.Do(req)

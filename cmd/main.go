@@ -20,7 +20,7 @@ var GitCommit string
 func main() {
 	log.Printf("===> virgo4-suggestor-ws starting up <===")
 
-	cfg := LoadConfig()
+	cfg := loadConfig()
 	svc := InitializeService(cfg)
 
 	gin.SetMode(gin.ReleaseMode)

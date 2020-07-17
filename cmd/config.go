@@ -70,7 +70,7 @@ func getSortedJSONEnvVars() []string {
 	return keys
 }
 
-func LoadConfig() *serviceConfig {
+func loadConfig() *serviceConfig {
 	cfg := serviceConfig{}
 
 	// json configs

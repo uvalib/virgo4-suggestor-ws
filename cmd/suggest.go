@@ -5,7 +5,9 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"github.com/uvalib/virgo4-parser/v4parser"
 	"gonum.org/v1/gonum/stat"
 )
@@ -16,6 +18,7 @@ type SuggestionContext struct {
 	parser      v4parser.SolrParser
 	req         SuggestionRequest
 	parsedQuery string
+	verbose     bool
 }
 
 // Suggestion contains data for a single suggestion
@@ -34,11 +37,23 @@ type SuggestionResponse struct {
 	Suggestions []Suggestion `json:"suggestions"`
 }
 
+func boolOptionWithFallback(opt string, fallback bool) bool {
+	var err error
+	var val bool
+
+	if val, err = strconv.ParseBool(opt); err != nil {
+		val = fallback
+	}
+
+	return val
+}
+
 // InitializeSuggestion will initialize the suggestion context based on the service context
-func InitializeSuggestion(svc *ServiceContext) *SuggestionContext {
+func InitializeSuggestion(svc *ServiceContext, c *gin.Context) *SuggestionContext {
 	s := &SuggestionContext{}
 
 	s.svc = svc
+	s.verbose = boolOptionWithFallback(c.Query("verbose"), false)
 
 	return s
 }
@@ -87,9 +102,10 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 	solrReq.json.Params = SolrRequestParams{
 		Debug:   false,
 		Start:   0,
-		Rows:    1000,
+		Rows:    100,
 		DefType: sugg.Params.DefType,
 		Fl:      sugg.Params.Fl,
+		Fq:      sugg.Params.Fq,
 		Q:       s.parsedQuery,
 		Qf:      sugg.Params.Qf,
 		Sort:    sugg.Params.Sort,
@@ -103,7 +119,9 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 	scores := []float64{}
 
 	for i, doc := range solrRes.Response.Docs {
-		log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
+		if s.verbose == true {
+			log.Printf("%03d %03.2f %s", i, doc.Score, doc.Phrase)
+		}
 		scores = append(scores, doc.Score)
 	}
 
@@ -113,16 +131,18 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 	median := stat.Quantile(0.5, stat.Empirical, scores, nil)
 	variance := stat.Variance(scores, nil)
 	stddev := math.Sqrt(variance)
-	cutoff := mean + 3*stddev
+	cutoff := mean + 2*stddev
 
-	log.Printf("len      : %v", len(scores))
-	log.Printf("max      : %v", solrRes.Response.Docs[0].Score)
-	log.Printf("min      : %v", solrRes.Response.Docs[len(solrRes.Response.Docs)-1].Score)
-	log.Printf("mean     : %v", mean)
-	log.Printf("median   : %v", median)
-	log.Printf("variance : %v", variance)
-	log.Printf("stddev   : %v", stddev)
-	log.Printf("cutoff   : %v", cutoff)
+	if s.verbose == true {
+		log.Printf("len      : %v", len(scores))
+		log.Printf("max      : %v", solrRes.Response.Docs[0].Score)
+		log.Printf("min      : %v", solrRes.Response.Docs[len(solrRes.Response.Docs)-1].Score)
+		log.Printf("mean     : %v", mean)
+		log.Printf("median   : %v", median)
+		log.Printf("variance : %v", variance)
+		log.Printf("stddev   : %v", stddev)
+		log.Printf("cutoff   : %v", cutoff)
+	}
 
 	for _, doc := range solrRes.Response.Docs {
 		if doc.Score < cutoff || len(res.Suggestions) >= sugg.Limit {
@@ -132,7 +152,9 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: doc.Phrase})
 	}
 
-	log.Printf("authors  : %v", len(res.Suggestions))
+	if s.verbose == true {
+		log.Printf("authors  : %v", len(res.Suggestions))
+	}
 
 	return res, nil
 }

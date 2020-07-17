@@ -117,7 +117,7 @@ func (svc *ServiceContext) VersionHandler(c *gin.Context) {
 
 // HealthCheckHandler reports the health of the serivce
 func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
-	s := InitializeSuggestion(svc)
+	s := InitializeSuggestion(svc, c)
 
 	ping := s.HandlePingRequest()
 
@@ -152,7 +152,7 @@ func (svc *ServiceContext) HealthCheckHandler(c *gin.Context) {
 // AuthorSuggestionHandler takes a keyword search and suggests alternate
 // author searches that may provide better or more focused results
 func (svc *ServiceContext) AuthorSuggestionHandler(c *gin.Context) {
-	s := InitializeSuggestion(svc)
+	s := InitializeSuggestion(svc, c)
 
 	if err := c.BindJSON(&s.req); err != nil {
 		log.Printf("AuthorSuggestionHandler: invalid request: %s", err.Error())
@@ -172,7 +172,7 @@ func (svc *ServiceContext) AuthorSuggestionHandler(c *gin.Context) {
 // SuggestionHandler takes a keyword search and suggests alternate searches
 // that may provide better or more focused results
 func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
-	s := InitializeSuggestion(svc)
+	s := InitializeSuggestion(svc, c)
 
 	if err := c.BindJSON(&s.req); err != nil {
 		log.Printf("SuggestionHandler: invalid request: %s", err.Error())
