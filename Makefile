@@ -102,39 +102,47 @@ rebuild-docker: docker-vars rebuild-linux
 # maintenance rules
 fmt:
 	@ \
-	echo "fmt: $(PACKAGE)" ; \
+	echo "[FMT] $(PACKAGE)" ; \
 	(cd "$(SRCDIR)" && $(GOFMT))
 
 vet:
 	@ \
-	echo "vet: $(PACKAGE)" ; \
+	echo "[VET] $(PACKAGE)" ; \
 	(cd "$(SRCDIR)" && $(GOVET))
 
 lint:
 	@ \
-	echo "lint: $(PACKAGE)" ; \
+	echo "[LINT] $(PACKAGE)" ; \
 	(cd "$(SRCDIR)" && $(GOLNT))
 
 clean:
 	@ \
-	echo "purge: $(BINDIR)/" ; \
+	echo "[PURGE] $(BINDIR)/" ; \
 	rm -rf $(BINDIR) ; \
-	echo "clean: $(PACKAGE)" ; \
+	echo "[CLEAN] $(PACKAGE)" ; \
 	(cd "$(SRCDIR)" && $(GOCLN))
 
 dep:
-	$(GOGET) -u ./$(SRCDIR)/...
-	$(GOMOD) tidy
+	@ \
+	echo "[DEP] $(GOGET)" ; \
+	$(GOGET) -u ./$(SRCDIR)/... ; \
+	echo "[DEP] $(GOMOD) tidy" ; \
+	$(GOMOD) tidy ; \
+	echo "[DEP] $(GOMOD) verify" ; \
 	$(GOMOD) verify
 
 check-static:
-	go get honnef.co/go/tools/cmd/staticcheck
-	$(GOBIN)/staticcheck -checks all,-S1002,-ST1003 ./cmd/...
+	@ \
+	echo "[CHECK] static checks" ; \
+	go install honnef.co/go/tools/cmd/staticcheck ; \
+	$(GOBIN)/staticcheck -checks all,-S1002,-ST1003 ./$(SRCDIR)/...
 
 check-shadow:
-	go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
-	go vet -vettool=$(GOBIN)/shadow ./cmd/...
+	@ \
+	echo "[CHECK] shadowed variables" ; \
+	go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow ; \
+	go vet -vettool=$(GOBIN)/shadow ./$(SRCDIR)/...
 
 check: check-shadow check-static
 
-mesuffer: check dep fmt vet
+sure: check dep fmt vet lint
