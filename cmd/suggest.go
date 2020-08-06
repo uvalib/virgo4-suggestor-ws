@@ -116,6 +116,10 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 		return res, err
 	}
 
+	if len(solrRes.Response.Docs) == 0 {
+		return res, nil
+	}
+
 	scores := []float64{}
 
 	for i, doc := range solrRes.Response.Docs {

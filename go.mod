@@ -11,7 +11,7 @@ require (
 	github.com/prometheus/common v0.11.1 // indirect
 	github.com/uvalib/virgo4-parser v0.0.0-20200804201336-f19184e8140c
 	github.com/zsais/go-gin-prometheus v0.1.0
-	golang.org/x/sys v0.0.0-20200803210538-64077c9b5642 // indirect
+	golang.org/x/sys v0.0.0-20200806125547-5acd03effb82 // indirect
 	gonum.org/v1/gonum v0.7.0
 	google.golang.org/protobuf v1.25.0 // indirect
 )
