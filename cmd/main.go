@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -52,6 +53,10 @@ func main() {
 	if api := router.Group("/api"); api != nil {
 		api.POST("/suggest", svc.SuggestionHandler)
 		api.POST("/suggest/authors", svc.AuthorSuggestionHandler)
+	}
+
+	if admin := router.Group("/admin", svc.AuthenticateHandler, svc.AdminHandler); admin != nil {
+		pprof.RouteRegister(admin, "pprof")
 	}
 
 	portStr := fmt.Sprintf(":%s", cfg.Service.Port)

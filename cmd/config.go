@@ -12,7 +12,8 @@ import (
 const envPrefix = "VIRGO4_SUGGESTOR_WS"
 
 type serviceConfigService struct {
-	Port string `json:"port,omitempty"`
+	Port   string `json:"port,omitempty"`
+	JWTKey string `json:"jwt_key,omitempty"`
 }
 
 type serviceConfigSolrParams struct {

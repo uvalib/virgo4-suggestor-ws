@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/uvalib/virgo4-jwt/v4jwt"
 )
 
 // ServiceSolrContext contains data related to the Solr API connection
@@ -187,4 +189,60 @@ func (svc *ServiceContext) SuggestionHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, suggestions)
+}
+
+func getBearerToken(authorization string) (string, error) {
+	components := strings.Split(strings.Join(strings.Fields(authorization), " "), " ")
+
+	// must have two components, the first of which is "Bearer", and the second a non-empty token
+	if len(components) != 2 || components[0] != "Bearer" || components[1] == "" {
+		return "", fmt.Errorf("invalid Authorization header: [%s]", authorization)
+	}
+
+	token := components[1]
+
+	if token == "undefined" {
+		return "", errors.New("bearer token is undefined")
+	}
+
+	return token, nil
+}
+
+// AuthenticateHandler ensures the request contains a valid token
+func (svc *ServiceContext) AuthenticateHandler(c *gin.Context) {
+	token, err := getBearerToken(c.GetHeader("Authorization"))
+	if err != nil {
+		log.Printf("authentication failed: [%s]", err.Error())
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := v4jwt.Validate(token, svc.config.Service.JWTKey)
+
+	if err != nil {
+		log.Printf("JWT signature for %s is invalid: %s", token, err.Error())
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	c.Set("claims", claims)
+}
+
+// AdminHandler ensures the token is for an admin user
+func (svc *ServiceContext) AdminHandler(c *gin.Context) {
+	val, ok := c.Get("claims")
+
+	if ok == false {
+		log.Printf("no claims")
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	claims := val.(*v4jwt.V4Claims)
+
+	if claims.Role.String() != "admin" {
+		log.Printf("insufficient permissions")
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
 }
