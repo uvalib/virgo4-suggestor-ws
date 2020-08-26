@@ -60,7 +60,7 @@ func InitializeSuggestion(svc *ServiceContext, c *gin.Context) *SuggestionContex
 
 // ParseQuery ensures that the incoming query is valid, and parses it
 func (s *SuggestionContext) ParseQuery() error {
-	if _, err := v4parser.ConvertToSolrWithParser(&s.parser, s.req.Query); err != nil {
+	if _, err := v4parser.ConvertToSolrWithParserAndTimeout(&s.parser, s.req.Query, 10); err != nil {
 		return err
 	}
 
