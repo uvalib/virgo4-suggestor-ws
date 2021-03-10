@@ -12,6 +12,8 @@ github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuy
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
 github.com/alecthomas/units v0.0.0-20190717042225-c3de453c63f4/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
 github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d/go.mod h1:rBZYJk541a8SKzHPHnH3zbiI+7dagKZ0cgpgrD7Fyho=
+github.com/antlr/antlr4 v0.0.0-20210304020514-0f8bddcbc14b h1:8MsgPS/CrG3huIsmrNUDtc+33SWjTfYcRUw3CljEayU=
+github.com/antlr/antlr4 v0.0.0-20210304020514-0f8bddcbc14b/go.mod h1:T7PbCXFs94rrTttyxjbyT5+/1V8T2TYDejxUfHJjw1Y=
 github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
 github.com/apache/thrift v0.13.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
 github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e/go.mod h1:3U/XgcO3hCbHZ8TKRvWD2dDTCfh9M9ya+I9JpbB7O8o=
@@ -312,12 +314,10 @@ github.com/ugorji/go/codec v1.2.4 h1:C5VurWRRCKjuENsbM6GYVw8W++WVW9rSxoACKIvxzz8
 github.com/ugorji/go/codec v1.2.4/go.mod h1:bWBu1+kIRWcF8uMklKaJrR6fTWQOwAlrIzX22pHwryA=
 github.com/urfave/cli v1.20.0/go.mod h1:70zkFmudgCuE/ngEzBv17Jvp/497gISqfk5gWijbERA=
 github.com/urfave/cli v1.22.1/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
-github.com/uvalib/antlr4 v0.0.0-20200923134101-dff98b67fb18 h1:kq7Z42mUNIhvkL2nEVW3IBKMDde30Wb7QVixn7QaZNA=
-github.com/uvalib/antlr4 v0.0.0-20200923134101-dff98b67fb18/go.mod h1:cppH23VknRINksatSXBh5/05/3k5odnMJthcfkzpcZA=
 github.com/uvalib/virgo4-jwt v0.0.0-20210129165249-920a9cfd20bd h1:eFcRGz+SyPq/xh6pGpCzd60Lqoi899BaFlI9yvm6cGk=
 github.com/uvalib/virgo4-jwt v0.0.0-20210129165249-920a9cfd20bd/go.mod h1:pPSHBTeq1RftpQGB6H1GaihwPZtl5RpGCEeov0eH05Y=
-github.com/uvalib/virgo4-parser v0.0.0-20210309213118-7a93331e0f85 h1:dgcELDCjZILL1QPXIsGaQAc+4TyfU3aguHvfIIjCDhY=
-github.com/uvalib/virgo4-parser v0.0.0-20210309213118-7a93331e0f85/go.mod h1:T9Siww9R+CCUT8onexI2r7+BWv9m1kQmcQZJ28rDMvk=
+github.com/uvalib/virgo4-parser v0.0.0-20210310003057-c2c91a62e7df h1:GpQ07dnYgoClWy/5lLGwRuRGROg3V80tvmfb9SSDPGA=
+github.com/uvalib/virgo4-parser v0.0.0-20210310003057-c2c91a62e7df/go.mod h1:4YdNBQMPrfj4xu4rGXKo/PYdKQ1v3z/7OiwS1ix9CIQ=
 github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/zsais/go-gin-prometheus v0.1.0 h1:bkLv1XCdzqVgQ36ScgRi09MA2UC1t3tAB6nsfErsGO4=
 github.com/zsais/go-gin-prometheus v0.1.0/go.mod h1:Slirjzuz8uM8Cw0jmPNqbneoqcUtY2GGjn2bEd4NRLY=
