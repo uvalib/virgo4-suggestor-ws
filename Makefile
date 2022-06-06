@@ -156,4 +156,4 @@ check-shadow:
 
 check: check-shadow check-static
 
-sure: check tidy verify fmt vet lint
+sure: tidy verify fmt vet lint
