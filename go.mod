@@ -18,6 +18,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.7 // indirect
 	github.com/prometheus/client_golang v1.15.1
 	github.com/prometheus/client_model v0.4.0 // indirect
+	github.com/prometheus/common v0.43.0 // indirect
 	github.com/prometheus/procfs v0.9.0 // indirect
 	github.com/rwtodd/Go.Sed v0.0.0-20210816025313-55464686f9ef // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
@@ -26,7 +27,7 @@ require (
 	github.com/uvalib/virgo4-parser v0.0.0-20220606190657-5119d778d14a
 	github.com/zsais/go-gin-prometheus v0.1.0
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.8.0 // indirect
+	golang.org/x/crypto v0.9.0 // indirect
 	golang.org/x/sys v0.8.0 // indirect
 	gonum.org/v1/gonum v0.13.0
 	gopkg.in/go-playground/assert.v1 v1.2.1 // indirect
