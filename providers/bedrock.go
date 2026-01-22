@@ -74,6 +74,22 @@ type AnthropicResponse struct {
 	} `json:"content"`
 }
 
+// Gemma-specific structs
+type GemmaMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type GemmaMessagesRequest struct {
+	Messages    []GemmaMessage `json:"messages"`
+	MaxTokens   int            `json:"maxTokens,omitempty"`
+	Temperature float64        `json:"temperature,omitempty"`
+	TopP        float64        `json:"topP,omitempty"`
+}
+
+// NOTE: Gemma response is typically generic or follows a specific structure depending on inference profile.
+// We will parse it dynamically or use a generic struct.
+
 func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []string) (AIResponse, error) {
 	var emptyResponse AIResponse
 
@@ -101,16 +117,40 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 
 	prompt := promptBuilder.String()
 
-	// Default to Anthropic (Claude) Format
-	reqBody := AnthropicRequest{
-		AnthropicVersion: "bedrock-2023-05-31",
-		MaxTokens:        2000,
-		System:           systemPromptContent,
-		Messages: []AnthropicMessage{
-			{Role: "user", Content: prompt},
-		},
+	var jsonBody []byte
+	var err error
+
+	// Check Model ID for "gemma"
+	modelLower := strings.ToLower(p.Model)
+
+	if strings.Contains(modelLower, "gemma") {
+		// Gemma Format
+		// Combine system prompt into the first user message because Gemma often expects a single conversation flow
+		// or specifically "user" / "model" roles.
+		fullPrompt := fmt.Sprintf("%s\n\n%s", systemPromptContent, prompt)
+
+		reqBody := GemmaMessagesRequest{
+			Messages: []GemmaMessage{
+				{Role: "user", Content: fullPrompt},
+			},
+			MaxTokens:   2000,
+			Temperature: 0.5,
+			TopP:        0.9,
+		}
+		jsonBody, err = json.Marshal(reqBody)
+
+	} else {
+		// Default to Anthropic (Claude) Format
+		reqBody := AnthropicRequest{
+			AnthropicVersion: "bedrock-2023-05-31",
+			MaxTokens:        2000,
+			System:           systemPromptContent,
+			Messages: []AnthropicMessage{
+				{Role: "user", Content: prompt},
+			},
+		}
+		jsonBody, err = json.Marshal(reqBody)
 	}
-	jsonBody, err := json.Marshal(reqBody)
 
 	if err != nil {
 		return emptyResponse, fmt.Errorf("failed to marshal request: %w", err)
@@ -153,17 +193,53 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 
 	var content string
 
-	// Default to Anthropic
-	var bedrockResp AnthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&bedrockResp); err != nil {
-		return emptyResponse, fmt.Errorf("failed to decode anthropic response: %w", err)
-	}
-	if len(bedrockResp.Content) > 0 {
-		content = bedrockResp.Content[0].Text
+	if strings.Contains(modelLower, "gemma") {
+		// Generic parse for Gemma (it varies: output.message.content or choices[0].message.content)
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return emptyResponse, fmt.Errorf("failed to decode gemma response: %w", err)
+		}
+
+		// Try finding content in common locations
+		// 1. 'choices' -> [0] -> 'message' -> 'content' (OpenAI style)
+		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				if msg, ok := choice["message"].(map[string]interface{}); ok {
+					if c, ok := msg["content"].(string); ok {
+						content = c
+					}
+				}
+			}
+		}
+		// 2. 'output' -> 'message' -> 'content' (Converse output style sometimes)
+		if content == "" {
+			if output, ok := result["output"].(map[string]interface{}); ok {
+				if msg, ok := output["message"].(map[string]interface{}); ok {
+					if c, ok := msg["content"].([]interface{}); ok && len(c) > 0 {
+						// Assuming content block list
+						if block, ok := c[0].(map[string]interface{}); ok {
+							if text, ok := block["text"].(string); ok {
+								content = text
+							}
+						}
+					}
+				}
+			}
+		}
+
+	} else {
+		// Default to Anthropic
+		var bedrockResp AnthropicResponse
+		if err := json.NewDecoder(resp.Body).Decode(&bedrockResp); err != nil {
+			return emptyResponse, fmt.Errorf("failed to decode anthropic response: %w", err)
+		}
+		if len(bedrockResp.Content) > 0 {
+			content = bedrockResp.Content[0].Text
+		}
 	}
 
 	if content == "" {
-		return emptyResponse, nil
+		return emptyResponse, fmt.Errorf("empty content from AI provider")
 	}
 
 	var aiResponse AIResponse
