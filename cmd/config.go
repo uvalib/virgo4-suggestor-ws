@@ -113,9 +113,9 @@ func loadConfig() *serviceConfig {
 
 	// Default AI config if not provided (Failover for Dev/Staging without Env Vars)
 	if cfg.AI.Provider == "" {
-		log.Printf("[CONFIG] AI config missing, applying DEFAULTS: Provider=bedrock, Model=us.google.gemma-2b-v1:0")
+		log.Printf("[CONFIG] AI config missing, applying DEFAULTS: Provider=bedrock, Model=anthropic.claude-3-haiku-20240307-v1:0")
 		cfg.AI.Provider = "bedrock"
-		cfg.AI.Model = "us.google.gemma-2b-v1:0"
+		cfg.AI.Model = "anthropic.claude-3-haiku-20240307-v1:0"
 	}
 
 	bytes, err := json.Marshal(cfg)
