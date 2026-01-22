@@ -187,6 +187,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	// 2. If no AI provider, just return authors
 	if s.svc.AIProvider == nil {
+		log.Printf("[DEBUG-FLOW] AIProvider is NIL. Skipping LLM step. (Check startup logs for initialization errors)")
 		if authorRes != nil {
 			res.Suggestions = authorRes.Suggestions
 		}
@@ -261,11 +262,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	res.Suggestions = verifiedSuggestions
 	
-	// LOG 3: Final Response
-	log.Printf("[DEBUG-FLOW] 3. Final Response to Client: %d suggestions", len(res.Suggestions))
-	for _, s := range res.Suggestions {
-		log.Printf("[DEBUG-FLOW]    -> %s (%s)", s.Value, s.Type)
-	}
+	log.Printf("overall  : %v", len(res.Suggestions))
 
 	return res, nil
 }
