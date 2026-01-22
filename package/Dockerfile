@@ -9,6 +9,7 @@ RUN apk update && apk upgrade && apk add --no-cache make
 WORKDIR /build
 COPY go.mod go.sum Makefile ./
 COPY cmd ./cmd
+COPY providers ./providers
 ARG GIT_COMMIT
 RUN make rebuild-docker GIT_COMMIT="$GIT_COMMIT"
 
