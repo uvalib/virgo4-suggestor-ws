@@ -112,7 +112,10 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 
 	promptBuilder.WriteString("1. If the query contains an OBVIOUS spelling error, set 'didYouMean' to the FULL corrected query string.\n")
 	promptBuilder.WriteString("2. If the query is likely intentional, leave 'didYouMean' empty.\n")
-	promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query. Do NOT suggest general topics/keywords.\n")
+	promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query.\n")
+	promptBuilder.WriteString("   - STRICTLY names of people (historians, writers) or organizations/agencies.\n")
+	promptBuilder.WriteString("   - Do NOT suggest book titles, general topics, historical events, or refined search queries.\n")
+	promptBuilder.WriteString("   - Example: For 'civil war', suggest 'Foote, Shelby' or 'McPherson, James', NOT 'Civil War Battles'.\n")
 	promptBuilder.WriteString("\nRespond in JSON format.")
 
 	prompt := promptBuilder.String()
