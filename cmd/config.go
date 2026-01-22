@@ -50,10 +50,18 @@ type serviceConfigSolr struct {
 	Clients serviceConfigSolrClients `json:"clients,omitempty"`
 }
 
+type serviceConfigAI struct {
+	Provider string `json:"provider,omitempty"`
+	Key      string `json:"key,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
 type serviceConfig struct {
 	Service     serviceConfigService         `json:"service,omitempty"`
 	Solr        serviceConfigSolr            `json:"solr,omitempty"`
 	Suggestions serviceConfigSuggestionTypes `json:"suggestions,omitempty"`
+	AI          serviceConfigAI              `json:"ai,omitempty"`
 }
 
 func getSortedJSONEnvVars() []string {

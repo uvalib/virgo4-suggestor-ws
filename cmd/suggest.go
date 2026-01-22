@@ -168,13 +168,126 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
-	if authors, err := s.HandleAuthorSuggestionRequest(); err == nil {
-		res.Suggestions = append(res.Suggestions, authors.Suggestions...)
+	// 1. Get existing Solr-based author suggestions
+	authorRes, err := s.HandleAuthorSuggestionRequest()
+	if err != nil {
+		log.Printf("Author suggestion failed: %s", err.Error())
+		// Continue even if author search fails, AI might still work
 	}
 
+	existingSuggestions := []string{}
+	if authorRes != nil {
+		for _, sugg := range authorRes.Suggestions {
+			existingSuggestions = append(existingSuggestions, sugg.Value)
+		}
+	}
+
+	// 2. If no AI provider, just return authors
+	if s.svc.AIProvider == nil {
+		if authorRes != nil {
+			res.Suggestions = authorRes.Suggestions
+		}
+		log.Printf("overall  : %v", len(res.Suggestions))
+		return res, nil
+	}
+
+	// 3. Call AI Provider for review/refine
+	// We parse the query first to ensure it's valid, but pass the raw query to AI
+	if err := s.ParseQuery(); err != nil {
+		// If query is invalid for Solr/Parser, still might be valid for AI?
+		// The v4parser is strict (expects field names), but raw queries are fine for AI.
+		// We log the error but PROCEED for AI.
+		if s.verbose {
+			log.Printf("Query parsing failed ('%s'), but proceeding to AI check", err.Error())
+		}
+	}
+
+	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, existingSuggestions)
+	if err != nil {
+		log.Printf("AI provider failed: %s", err.Error())
+		// Fallback to existing suggestions
+		if authorRes != nil {
+			res.Suggestions = authorRes.Suggestions
+		}
+		return res, nil
+	}
+
+	// 4. Verify AI suggestions
+	// We trust the "DidYouMean" from AI mostly, but suggestions should be verified
+	verifiedSuggestions := []Suggestion{}
+
+	// If DidYouMean is present, we can add it or return it.
+	// The current API structure doesn't support 'didYouMean' field natively in SuggestedSearch?
+	// The client expects {type, value}.
+	// If didYouMean is present, maybe add it as a "spelling" or "correction" type?
+	// But client might not render it.
+	// For now, focusing on the 'suggestions' list.
+
+	// Use a channel for concurrent verification
+	type resultCheck struct {
+		term  string
+		valid bool
+	}
+	checkChan := make(chan resultCheck, len(aiRes.Suggestions))
+
+	for _, term := range aiRes.Suggestions {
+		go func(t string) {
+			valid := s.verifySuggestionResults(t)
+			checkChan <- resultCheck{term: t, valid: valid}
+		}(term)
+	}
+
+	resultsMap := make(map[string]bool)
+	for i := 0; i < len(aiRes.Suggestions); i++ {
+		r := <-checkChan
+		resultsMap[r.term] = r.valid
+	}
+
+	for _, term := range aiRes.Suggestions {
+		if resultsMap[term] {
+			// Force type to "author" as requested
+			verifiedSuggestions = append(verifiedSuggestions, Suggestion{Type: "author", Value: term})
+		}
+	}
+
+	res.Suggestions = verifiedSuggestions
 	log.Printf("overall  : %v", len(res.Suggestions))
 
 	return res, nil
+}
+
+// verifySuggestionResults checks if a query returns > 0 hits in Solr
+func (s *SuggestionContext) verifySuggestionResults(query string) bool {
+	// Re-use author params as a base but remove specifics?
+	// Or try to execute a broad search.
+	// We'll use the author params for now as that's what we have configured.
+	sugg := s.svc.config.Suggestions.Author
+
+	solrReq := SolrRequest{}
+	solrReq.json.Params = SolrRequestParams{
+		Start:   0,
+		Rows:    0, // We only care about NumFound
+		DefType: sugg.Params.DefType,
+		// Fl:      sugg.Params.Fl, // Not needed for count
+		// Fq:      sugg.Params.Fq,
+		Q:    query,
+		Sort: sugg.Params.Sort,
+	}
+
+	// Try without Qf first to allow broad search?
+	// Or matches author?
+	// Let's try matching the client behavior which likely just searches.
+	// If we omit Qf, Solr uses default field.
+	// solrReq.json.Params.Qf = sugg.Params.Qf
+
+	solrRes, err := s.SolrQuery(&solrReq)
+	if err != nil {
+		// Log as warning but Proceed (Fail Open) if we can't verify (e.g. Solr down/unreachable).
+		log.Printf("Verification skipped for '%s' due to error: %s", query, err.Error())
+		return true
+	}
+
+	return solrRes.Response.NumFound > 0
 }
 
 // HandlePingRequest sends a ping request to Solr and checks the response.

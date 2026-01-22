@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/uvalib/virgo4-jwt/v4jwt"
+	"github.com/uvalib/virgo4-suggestor-ws/providers"
 )
 
 // ServiceSolrContext contains data related to the Solr API connection
@@ -30,8 +31,9 @@ type ServiceSolr struct {
 
 // ServiceContext contains common data used by all handlers
 type ServiceContext struct {
-	config *serviceConfig
-	solr   ServiceSolr
+	config     *serviceConfig
+	solr       ServiceSolr
+	AIProvider providers.AIProvider
 }
 
 func integerWithMinimum(str string, min int) int {
@@ -87,6 +89,14 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	svc := ServiceContext{
 		config: cfg,
 		solr:   solr,
+	}
+
+	// Initialize AI Provider
+	if cfg.AI.Provider == "bedrock" {
+		log.Printf("[SERVICE] initializing AWS Bedrock AI provider")
+		svc.AIProvider = providers.NewBedrockProvider(cfg.AI.Model, httpClientWithTimeouts("10", "30"))
+	} else {
+		log.Printf("[SERVICE] AI provider not configured or unknown: [%s]", cfg.AI.Provider)
 	}
 
 	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
