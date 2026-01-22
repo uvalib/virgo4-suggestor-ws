@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ func NewBedrockProvider(model string, client *http.Client) *BedrockProvider {
 	// Load default AWS config
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		fmt.Printf("ERROR: unable to load SDK config, %v\n", err)
+		log.Printf("ERROR: BedrockProvider: unable to load SDK config (AWS Credentials missing?): %v", err)
 		return nil
 	}
 

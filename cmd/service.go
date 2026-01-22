@@ -95,6 +95,9 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	if cfg.AI.Provider == "bedrock" {
 		log.Printf("[SERVICE] initializing AWS Bedrock AI provider")
 		svc.AIProvider = providers.NewBedrockProvider(cfg.AI.Model, httpClientWithTimeouts("10", "30"))
+		if svc.AIProvider == nil {
+			log.Printf("[SERVICE] FATAL: Bedrock Provider failed to initialize (returned nil). See previous logs.")
+		}
 	} else {
 		log.Printf("[SERVICE] AI provider not configured or unknown: [%s]", cfg.AI.Provider)
 	}
