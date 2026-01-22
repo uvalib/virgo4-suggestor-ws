@@ -182,6 +182,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 
+	// LOG 1: Search Context
+	log.Printf("[DEBUG-FLOW] 1. Search Context (Existing Authors): %v", existingSuggestions)
+
 	// 2. If no AI provider, just return authors
 	if s.svc.AIProvider == nil {
 		if authorRes != nil {
@@ -210,6 +213,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			res.Suggestions = authorRes.Suggestions
 		}
 		return res, nil
+	}
+
+	// LOG 2: AI Response
+	log.Printf("[DEBUG-FLOW] 2. LLM Response (Raw Suggestions): %v", aiRes.Suggestions)
+	if aiRes.DidYouMean != "" {
+		log.Printf("[DEBUG-FLOW]    LLM DidYouMean: %s", aiRes.DidYouMean)
 	}
 
 	// 4. Verify AI suggestions
@@ -251,7 +260,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	res.Suggestions = verifiedSuggestions
-	log.Printf("overall  : %v", len(res.Suggestions))
+	
+	// LOG 3: Final Response
+	log.Printf("[DEBUG-FLOW] 3. Final Response to Client: %d suggestions", len(res.Suggestions))
+	for _, s := range res.Suggestions {
+		log.Printf("[DEBUG-FLOW]    -> %s (%s)", s.Value, s.Type)
+	}
 
 	return res, nil
 }
