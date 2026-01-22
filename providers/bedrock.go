@@ -35,7 +35,7 @@ func NewBedrockProvider(model string, client *http.Client) *BedrockProvider {
 	}
 
 	if model == "" {
-		model = "google.gemma-2b-v1:0"
+		model = "us.google.gemma-2b-v1:0"
 	}
 
 	return &BedrockProvider{
