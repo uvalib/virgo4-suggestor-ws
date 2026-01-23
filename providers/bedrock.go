@@ -116,6 +116,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query.\n")
 	promptBuilder.WriteString("   - STRICTLY names of people (historians, writers) or organizations/agencies.\n")
 	promptBuilder.WriteString("   - Do NOT suggest book titles, general topics, historical events, or refined search queries.\n")
+	promptBuilder.WriteString("   - Order the authors by relevance to the query.\n")
 	promptBuilder.WriteString("   - Example: For 'civil war', suggest 'Foote, Shelby' or 'McPherson, James', NOT 'Civil War Battles'.\n")
 	promptBuilder.WriteString("\nRespond in JSON format.")
 
