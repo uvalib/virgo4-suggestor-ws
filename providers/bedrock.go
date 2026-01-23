@@ -73,6 +73,10 @@ type AnthropicResponse struct {
 		Text string `json:"text"`
 		Type string `json:"type"`
 	} `json:"content"`
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 }
 
 // Gemma-specific structs
@@ -232,6 +236,19 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 			}
 		}
 
+		// Try to extract usage for Gemma (OpenAI style)
+		if usage, ok := result["usage"].(map[string]interface{}); ok {
+			in := 0
+			out := 0
+			if v, ok := usage["prompt_tokens"].(float64); ok {
+				in = int(v)
+			}
+			if v, ok := usage["completion_tokens"].(float64); ok {
+				out = int(v)
+			}
+			log.Printf("[BEDROCK-USAGE] Model: %s | Input Tokens: %d | Output Tokens: %d", p.Model, in, out)
+		}
+
 	} else {
 		// Default to Anthropic
 		var bedrockResp AnthropicResponse
@@ -241,6 +258,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 		if len(bedrockResp.Content) > 0 {
 			content = bedrockResp.Content[0].Text
 		}
+		log.Printf("[BEDROCK-USAGE] Model: %s | Input Tokens: %d | Output Tokens: %d", p.Model, bedrockResp.Usage.InputTokens, bedrockResp.Usage.OutputTokens)
 	}
 
 	if content == "" {
