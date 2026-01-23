@@ -279,8 +279,6 @@ func (s *SuggestionContext) verifySuggestionResults(query string) bool {
 		Start:   0,
 		Rows:    0, // We only care about NumFound
 		DefType: sugg.Params.DefType,
-		// Fl:      sugg.Params.Fl, // Not needed for count
-		// Fq:      sugg.Params.Fq,
 		Q:    query,
 		Sort: sugg.Params.Sort,
 	}
@@ -289,7 +287,8 @@ func (s *SuggestionContext) verifySuggestionResults(query string) bool {
 	// Or matches author?
 	// Let's try matching the client behavior which likely just searches.
 	// If we omit Qf, Solr uses default field.
-	// solrReq.json.Params.Qf = sugg.Params.Qf
+	// Use the author config Qf (Query Fields) to search in the appropriate fields (e.g. phrase, phonetic)
+	solrReq.json.Params.Qf = sugg.Params.Qf
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
