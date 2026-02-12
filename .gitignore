@@ -10,3 +10,5 @@ env.*
 *.swp
 *~
 .idea
+cfg.sh
+setup_env.sh
