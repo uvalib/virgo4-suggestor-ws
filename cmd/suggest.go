@@ -29,7 +29,8 @@ type Suggestion struct {
 
 // SuggestionRequest defines the format of a suggestion request
 type SuggestionRequest struct {
-	Query string `json:"query"`
+	Query    string `json:"query"`
+	AIPrompt string `json:"aiPrompt"`
 }
 
 // SuggestionResponse contains the full set of suggestions
@@ -195,18 +196,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		return res, nil
 	}
 
-	// 3. Call AI Provider for review/refine
-	// We parse the query first to ensure it's valid, but pass the raw query to AI
-	if err := s.ParseQuery(); err != nil {
-		// If query is invalid for Solr/Parser, still might be valid for AI?
-		// The v4parser is strict (expects field names), but raw queries are fine for AI.
-		// We log the error but PROCEED for AI.
-		if s.verbose {
-			log.Printf("Query parsing failed ('%s'), but proceeding to AI check", err.Error())
-		}
-	}
-
-	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, existingSuggestions)
+	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, s.req.AIPrompt, existingSuggestions)
 	if err != nil {
 		log.Printf("ERROR: ai provider failed: %s", err.Error())
 		// Fallback to existing suggestions

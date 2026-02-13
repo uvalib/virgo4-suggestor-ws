@@ -94,37 +94,50 @@ type gemmaMessagesRequest struct {
 	TopP        float64        `json:"topP,omitempty"`
 }
 
-// GetSuggestions will take a user query and existing author suggestions and refine the results using
+// GetSuggestions will take a user query, optional prompt and existing author suggestions and refine the results using
 // NOTE: Gemma response is typically generic or follows a specific structure depending on inference profile.
 // We will parse it dynamically or use a generic struct.
-func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []string) (*AIResponse, error) {
+func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
 	// Construct prompts
 	systemPromptContent := "You are a helpful assistant that outputs JSON."
 
-	// User prompt construction
-	var promptBuilder strings.Builder
-	fmt.Fprintf(&promptBuilder, "You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query)
-
+	resultsString := "\nNo author suggestions were found in our catalog.\n"
 	if len(existingSuggestions) > 0 {
-		promptBuilder.WriteString("Here are some author suggestions retrieved from our catalog:\n")
+		resultsString = "Here are some author suggestions retrieved from our catalog:\n"
 		for i, s := range existingSuggestions {
-			fmt.Fprintf(&promptBuilder, "%d. %s\n", i+1, s)
+			resultsString += fmt.Sprintf("%d. %s\n", i+1, s)
 		}
-		promptBuilder.WriteString("\nAnalyze the query and these suggestions. You may keep good suggestions, refine them, or replace them if they are not relevant.\n")
-	} else {
-		promptBuilder.WriteString("\nNo author suggestions were found in our catalog.\n")
 	}
 
-	promptBuilder.WriteString("1. If the query contains an OBVIOUS spelling error, set 'didYouMean' to the FULL corrected query string.\n")
-	promptBuilder.WriteString("2. If the query is likely intentional, leave 'didYouMean' empty.\n")
-	promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query.\n")
-	promptBuilder.WriteString("   - STRICTLY names of people (historians, writers) or organizations/agencies.\n")
-	promptBuilder.WriteString("   - Do NOT suggest book titles, general topics, historical events, or refined search queries.\n")
-	promptBuilder.WriteString("   - Order the authors by relevance to the query.\n")
-	promptBuilder.WriteString("   - Example: For 'civil war', suggest 'Foote, Shelby' or 'McPherson, James', NOT 'Civil War Battles'.\n")
-	promptBuilder.WriteString("\nRespond in JSON format.")
+	prompt := ""
+	if customPrompt == "" {
+		log.Printf("INFO: use default prompt to get suggestions")
+		var promptBuilder strings.Builder
+		fmt.Fprintf(&promptBuilder, "You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query)
 
-	prompt := promptBuilder.String()
+		if len(existingSuggestions) > 0 {
+			promptBuilder.WriteString(resultsString)
+			promptBuilder.WriteString("\nAnalyze the query and these suggestions. You may keep good suggestions, refine them, or replace them if they are not relevant.\n")
+		} else {
+			promptBuilder.WriteString("\nNo author suggestions were found in our catalog.\n")
+		}
+
+		promptBuilder.WriteString("1. If the query contains an OBVIOUS spelling error, set 'didYouMean' to the FULL corrected query string.\n")
+		promptBuilder.WriteString("2. If the query is likely intentional, leave 'didYouMean' empty.\n")
+		promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query.\n")
+		promptBuilder.WriteString("   - STRICTLY names of people (historians, writers) or organizations/agencies.\n")
+		promptBuilder.WriteString("   - Do NOT suggest book titles, general topics, historical events, or refined search queries.\n")
+		promptBuilder.WriteString("   - Order the authors by relevance to the query.\n")
+		promptBuilder.WriteString("   - Example: For 'civil war', suggest 'Foote, Shelby' or 'McPherson, James', NOT 'Civil War Battles'.\n")
+		promptBuilder.WriteString("\nRespond in JSON format.")
+
+		prompt = promptBuilder.String()
+	} else {
+		log.Printf("INFO: use custom prompt to get suggestions")
+		prompt = customPrompt
+		prompt = strings.Replace(prompt, "$QUERY", query, 1)
+		prompt = strings.Replace(prompt, "$RESULTS", resultsString, 1)
+	}
 
 	var jsonBody []byte
 	var err error

@@ -9,7 +9,7 @@ type AIResponse struct {
 // AIProvider defines the interface for different AI backends
 type AIProvider interface {
 	// GetSuggestions generates search suggestions based on the user query and existing suggestions
-	GetSuggestions(query string, existingSuggestions []string) (*AIResponse, error)
+	GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error)
 
 	// Name returns the name of the provider (e.g. "gemini", "openai")
 	Name() string
