@@ -101,11 +101,11 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	// Construct prompts
 	systemPromptContent := "You are a helpful assistant that outputs JSON."
 
-	resultsString := "\nNo author suggestions were found in our catalog.\n"
+	suggestionsString := "\nNo author suggestions were found in our catalog.\n"
 	if len(existingSuggestions) > 0 {
-		resultsString = "Here are some author suggestions retrieved from our catalog:\n"
+		suggestionsString = "Here are some author suggestions retrieved from our catalog:\n"
 		for i, s := range existingSuggestions {
-			resultsString += fmt.Sprintf("%d. %s\n", i+1, s)
+			suggestionsString += fmt.Sprintf("%d. %s\n", i+1, s)
 		}
 	}
 
@@ -116,7 +116,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		fmt.Fprintf(&promptBuilder, "You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query)
 
 		if len(existingSuggestions) > 0 {
-			promptBuilder.WriteString(resultsString)
+			promptBuilder.WriteString(suggestionsString)
 			promptBuilder.WriteString("\nAnalyze the query and these suggestions. You may keep good suggestions, refine them, or replace them if they are not relevant.\n")
 		} else {
 			promptBuilder.WriteString("\nNo author suggestions were found in our catalog.\n")
@@ -136,7 +136,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		log.Printf("INFO: use custom prompt to get suggestions")
 		prompt = customPrompt
 		prompt = strings.Replace(prompt, "$QUERY", query, 1)
-		prompt = strings.Replace(prompt, "$RESULTS", resultsString, 1)
+		prompt = strings.Replace(prompt, "$SUGGESTIONS", suggestionsString, 1)
 	}
 
 	var jsonBody []byte
