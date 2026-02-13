@@ -208,7 +208,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, existingSuggestions)
 	if err != nil {
-		log.Printf("AI provider failed: %s", err.Error())
+		log.Printf("ERROR: ai provider failed: %s", err.Error())
 		// Fallback to existing suggestions
 		if authorRes != nil {
 			res.Suggestions = authorRes.Suggestions
@@ -261,7 +261,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	res.Suggestions = verifiedSuggestions
-	
+
 	log.Printf("overall  : %v", len(res.Suggestions))
 
 	return res, nil
@@ -279,8 +279,8 @@ func (s *SuggestionContext) verifySuggestionResults(query string) bool {
 		Start:   0,
 		Rows:    0, // We only care about NumFound
 		DefType: sugg.Params.DefType,
-		Q:    query,
-		Sort: sugg.Params.Sort,
+		Q:       query,
+		Sort:    sugg.Params.Sort,
 	}
 
 	// Try without Qf first to allow broad search?

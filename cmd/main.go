@@ -59,8 +59,7 @@ func main() {
 		pprof.RouteRegister(admin, "pprof")
 	}
 
+	log.Printf("INFO: statup suggestor-ws on port %s", cfg.Service.Port)
 	portStr := fmt.Sprintf(":%s", cfg.Service.Port)
-	log.Printf("Start service on %s", portStr)
-
 	log.Fatal(router.Run(portStr))
 }

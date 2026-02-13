@@ -91,19 +91,23 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 		solr:   solr,
 	}
 
+	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
+	log.Printf("[SERVICE] solr healthcheck url = [%s]", healthCtx.url)
+	log.Printf("[SERVICE] ai provider          = [%s]", cfg.AI.Provider)
+	log.Printf("[SERVICE] ai model             = [%s]", cfg.AI.Model)
+
 	// Initialize AI Provider
 	if cfg.AI.Provider == "bedrock" {
 		log.Printf("[SERVICE] initializing AWS Bedrock AI provider")
-		svc.AIProvider = providers.NewBedrockProvider(cfg.AI.Model, httpClientWithTimeouts("10", "30"))
-		if svc.AIProvider == nil {
-			log.Printf("[SERVICE] FATAL: Bedrock Provider failed to initialize (returned nil). See previous logs.")
+		aiProvider, err := providers.NewBedrockProvider(cfg.AI.Model, httpClientWithTimeouts("10", "30"))
+		if err != nil {
+			log.Printf("[SERVICE] FATAL: %s", err.Error())
+		} else {
+			svc.AIProvider = aiProvider
 		}
 	} else {
 		log.Printf("[SERVICE] AI provider not configured or unknown: [%s]", cfg.AI.Provider)
 	}
-
-	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
-	log.Printf("[SERVICE] solr healthcheck url = [%s]", healthCtx.url)
 
 	return &svc
 }

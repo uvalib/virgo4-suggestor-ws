@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 )
 
+// BedrockProvider contains provider details
 type BedrockProvider struct {
 	Region     string
 	Model      string
@@ -26,16 +27,15 @@ type BedrockProvider struct {
 	Config     aws.Config
 }
 
-func NewBedrockProvider(model string, client *http.Client) *BedrockProvider {
-	// Load default AWS config
+// NewBedrockProvider will instantiate a new AI provider using bedrock
+func NewBedrockProvider(model string, client *http.Client) (*BedrockProvider, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Printf("ERROR: BedrockProvider: unable to load SDK config (AWS Credentials missing?): %v", err)
-		return nil
+		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
 	}
 
 	if model == "" {
-		model = "google.gemma-3-4b-it"
+		return nil, fmt.Errorf("missing required model")
 	}
 
 	return &BedrockProvider{
@@ -44,31 +44,33 @@ func NewBedrockProvider(model string, client *http.Client) *BedrockProvider {
 		HTTPClient: client,
 		Signer:     v4.NewSigner(),
 		Config:     cfg,
-	}
+	}, nil
 }
 
+// Name returns the name of the provider (e.g. "gemini", "openai")
 func (p *BedrockProvider) Name() string {
 	return "bedrock"
 }
 
+// GetModel returns the specific model ID being used
 func (p *BedrockProvider) GetModel() string {
 	return p.Model
 }
 
 // Anthropic-specific structs for Bedrock
-type AnthropicRequest struct {
+type anthropicRequest struct {
 	AnthropicVersion string             `json:"anthropic_version"`
 	MaxTokens        int                `json:"max_tokens"`
 	System           string             `json:"system,omitempty"`
-	Messages         []AnthropicMessage `json:"messages"`
+	Messages         []anthropicMessage `json:"messages"`
 }
 
-type AnthropicMessage struct {
+type anthropicMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-type AnthropicResponse struct {
+type anthropicResponse struct {
 	Content []struct {
 		Text string `json:"text"`
 		Type string `json:"type"`
@@ -80,35 +82,33 @@ type AnthropicResponse struct {
 }
 
 // Gemma-specific structs
-type GemmaMessage struct {
+type gemmaMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-type GemmaMessagesRequest struct {
-	Messages    []GemmaMessage `json:"messages"`
+type gemmaMessagesRequest struct {
+	Messages    []gemmaMessage `json:"messages"`
 	MaxTokens   int            `json:"maxTokens,omitempty"`
 	Temperature float64        `json:"temperature,omitempty"`
 	TopP        float64        `json:"topP,omitempty"`
 }
 
+// GetSuggestions will take a user query and existing author suggestions and refine the results using
 // NOTE: Gemma response is typically generic or follows a specific structure depending on inference profile.
 // We will parse it dynamically or use a generic struct.
-
-func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []string) (AIResponse, error) {
-	var emptyResponse AIResponse
-
+func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []string) (*AIResponse, error) {
 	// Construct prompts
 	systemPromptContent := "You are a helpful assistant that outputs JSON."
 
 	// User prompt construction
 	var promptBuilder strings.Builder
-	promptBuilder.WriteString(fmt.Sprintf("You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query))
+	fmt.Fprintf(&promptBuilder, "You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query)
 
 	if len(existingSuggestions) > 0 {
 		promptBuilder.WriteString("Here are some author suggestions retrieved from our catalog:\n")
 		for i, s := range existingSuggestions {
-			promptBuilder.WriteString(fmt.Sprintf("%d. %s\n", i+1, s))
+			fmt.Fprintf(&promptBuilder, "%d. %s\n", i+1, s)
 		}
 		promptBuilder.WriteString("\nAnalyze the query and these suggestions. You may keep good suggestions, refine them, or replace them if they are not relevant.\n")
 	} else {
@@ -133,13 +133,15 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	modelLower := strings.ToLower(p.Model)
 
 	if strings.Contains(modelLower, "gemma") {
+		log.Printf("INFO: prompt [%s]", prompt)
+
 		// Gemma Format
 		// Combine system prompt into the first user message because Gemma often expects a single conversation flow
 		// or specifically "user" / "model" roles.
 		fullPrompt := fmt.Sprintf("%s\n\n%s", systemPromptContent, prompt)
 
-		reqBody := GemmaMessagesRequest{
-			Messages: []GemmaMessage{
+		reqBody := gemmaMessagesRequest{
+			Messages: []gemmaMessage{
 				{Role: "user", Content: fullPrompt},
 			},
 			MaxTokens:   2000,
@@ -150,11 +152,11 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 
 	} else {
 		// Default to Anthropic (Claude) Format
-		reqBody := AnthropicRequest{
+		reqBody := anthropicRequest{
 			AnthropicVersion: "bedrock-2023-05-31",
 			MaxTokens:        2000,
 			System:           systemPromptContent,
-			Messages: []AnthropicMessage{
+			Messages: []anthropicMessage{
 				{Role: "user", Content: prompt},
 			},
 		}
@@ -162,7 +164,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	}
 
 	if err != nil {
-		return emptyResponse, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Construct Bedrock Runtime URL
@@ -170,7 +172,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return emptyResponse, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -178,7 +180,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	// Sign the request
 	creds, err := p.Config.Credentials.Retrieve(context.TODO())
 	if err != nil {
-		return emptyResponse, fmt.Errorf("failed to retrieve credentials: %w", err)
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
 	}
 
 	// Calculate payload hash
@@ -186,34 +188,36 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	payloadHash := hex.EncodeToString(hash[:])
 
 	if err := p.Signer.SignHTTP(context.TODO(), creds, req, payloadHash, "bedrock", p.Region, time.Now()); err != nil {
-		return emptyResponse, fmt.Errorf("failed to sign request: %w", err)
+		return nil, fmt.Errorf("failed to sign request: %w", err)
 	}
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return emptyResponse, fmt.Errorf("failed to invoke bedrock: %w", err)
+		return nil, fmt.Errorf("failed to invoke bedrock: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return emptyResponse, fmt.Errorf("bedrock returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("bedrock returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var content string
 
 	if strings.Contains(modelLower, "gemma") {
+		log.Printf("INFO: pull ai results from a gemma model")
+
 		// Generic parse for Gemma (it varies: output.message.content or choices[0].message.content)
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return emptyResponse, fmt.Errorf("failed to decode gemma response: %w", err)
+			return nil, fmt.Errorf("failed to decode gemma response: %w", err)
 		}
 
 		// Try finding content in common locations
 		// 1. 'choices' -> [0] -> 'message' -> 'content' (OpenAI style)
-		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]interface{}); ok {
-				if msg, ok := choice["message"].(map[string]interface{}); ok {
+		if choices, ok := result["choices"].([]any); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]any); ok {
+				if msg, ok := choice["message"].(map[string]any); ok {
 					if c, ok := msg["content"].(string); ok {
 						content = c
 					}
@@ -222,11 +226,11 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 		}
 		// 2. 'output' -> 'message' -> 'content' (Converse output style sometimes)
 		if content == "" {
-			if output, ok := result["output"].(map[string]interface{}); ok {
-				if msg, ok := output["message"].(map[string]interface{}); ok {
-					if c, ok := msg["content"].([]interface{}); ok && len(c) > 0 {
+			if output, ok := result["output"].(map[string]any); ok {
+				if msg, ok := output["message"].(map[string]any); ok {
+					if c, ok := msg["content"].([]any); ok && len(c) > 0 {
 						// Assuming content block list
-						if block, ok := c[0].(map[string]interface{}); ok {
+						if block, ok := c[0].(map[string]any); ok {
 							if text, ok := block["text"].(string); ok {
 								content = text
 							}
@@ -237,7 +241,7 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 		}
 
 		// Try to extract usage for Gemma (OpenAI style)
-		if usage, ok := result["usage"].(map[string]interface{}); ok {
+		if usage, ok := result["usage"].(map[string]any); ok {
 			in := 0
 			out := 0
 			if v, ok := usage["prompt_tokens"].(float64); ok {
@@ -250,10 +254,11 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 		}
 
 	} else {
+		log.Printf("INFO: pull anthropic ai results")
 		// Default to Anthropic
-		var bedrockResp AnthropicResponse
+		var bedrockResp anthropicResponse
 		if err := json.NewDecoder(resp.Body).Decode(&bedrockResp); err != nil {
-			return emptyResponse, fmt.Errorf("failed to decode anthropic response: %w", err)
+			return nil, fmt.Errorf("failed to decode anthropic response: %w", err)
 		}
 		if len(bedrockResp.Content) > 0 {
 			content = bedrockResp.Content[0].Text
@@ -262,23 +267,20 @@ func (p *BedrockProvider) GetSuggestions(query string, existingSuggestions []str
 	}
 
 	if content == "" {
-		return emptyResponse, fmt.Errorf("empty content from AI provider")
+		return nil, fmt.Errorf("empty content from AI provider")
 	}
+
+	// get rid of anything before and after the { and } that bracket a json response
+	content = strings.TrimSpace(content)
+	startIdx := strings.Index(content, "{")
+	endIdx := strings.LastIndex(content, "}")
+	content = content[startIdx : endIdx+1]
+	log.Printf("INFO: final ai response %s", content)
 
 	var aiResponse AIResponse
-	// Clean up content from potential markdown markers like ```json
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimSuffix(content, "```")
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
-	}
-
 	if err := json.Unmarshal([]byte(content), &aiResponse); err != nil {
-		return emptyResponse, fmt.Errorf("failed to parse generated text as JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse generated text as JSON: %w", err)
 	}
 
-	return aiResponse, nil
+	return &aiResponse, nil
 }
