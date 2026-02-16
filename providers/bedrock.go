@@ -282,6 +282,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	if content == "" {
 		return nil, fmt.Errorf("empty content from AI provider")
 	}
+	log.Printf("INFO: ai response %s", content)
 
 	// get rid of anything before and after the { and } that bracket a json response
 	content = strings.TrimSpace(content)
