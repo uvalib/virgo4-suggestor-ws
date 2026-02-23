@@ -183,6 +183,15 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 
+	if s.req.AIPrompt == "" {
+		log.Printf("INFO: no api prompt specified; just use solr suggestions")
+		if authorRes != nil {
+			res.Suggestions = authorRes.Suggestions
+		}
+		log.Printf("overall  : %v", len(res.Suggestions))
+		return res, nil
+	}
+
 	// LOG 1: Search Context
 	log.Printf("[DEBUG-FLOW] 1. Search Context (Existing Authors): %v", existingSuggestions)
 

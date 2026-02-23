@@ -287,8 +287,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	// get rid of anything before and after the { and } that bracket a json response
 	content = strings.TrimSpace(content)
 	startIdx := strings.Index(content, "{")
-	endIdx := strings.LastIndex(content, "}")
-	content = content[startIdx : endIdx+1]
+	if startIdx > -1 {
+		endIdx := strings.LastIndex(content, "}")
+		content = content[startIdx : endIdx+1]
+	}
 	log.Printf("INFO: final ai response %s", content)
 
 	var aiResponse AIResponse
