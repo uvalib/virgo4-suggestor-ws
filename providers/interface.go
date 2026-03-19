@@ -16,4 +16,7 @@ type AIProvider interface {
 
 	// GetModel returns the specific model ID being used
 	GetModel() string
+
+	// Retrieve will query the provider's Knowledge Base (if supported) and return relevant metadata
+	Retrieve(query string) ([]string, error)
 }

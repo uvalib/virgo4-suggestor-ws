@@ -20,15 +20,16 @@ import (
 
 // BedrockProvider contains provider details
 type BedrockProvider struct {
-	Region     string
-	Model      string
-	HTTPClient *http.Client
-	Signer     *v4.Signer
-	Config     aws.Config
+	Region          string
+	Model           string
+	KnowledgeBaseID string
+	HTTPClient      *http.Client
+	Signer          *v4.Signer
+	Config          aws.Config
 }
 
 // NewBedrockProvider will instantiate a new AI provider using bedrock
-func NewBedrockProvider(model string, client *http.Client) (*BedrockProvider, error) {
+func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Client) (*BedrockProvider, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
@@ -39,11 +40,12 @@ func NewBedrockProvider(model string, client *http.Client) (*BedrockProvider, er
 	}
 
 	return &BedrockProvider{
-		Region:     cfg.Region,
-		Model:      model,
-		HTTPClient: client,
-		Signer:     v4.NewSigner(),
-		Config:     cfg,
+		Region:          cfg.Region,
+		Model:           model,
+		KnowledgeBaseID: knowledgeBaseID,
+		HTTPClient:      client,
+		Signer:          v4.NewSigner(),
+		Config:          cfg,
 	}, nil
 }
 
@@ -92,6 +94,113 @@ type gemmaMessagesRequest struct {
 	MaxTokens   int            `json:"maxTokens,omitempty"`
 	Temperature float64        `json:"temperature,omitempty"`
 	TopP        float64        `json:"topP,omitempty"`
+}
+
+// Bedrock KB Retrieve structs
+type kbRetrieveRequest struct {
+	RetrievalQuery         kbQuery                `json:"retrievalQuery"`
+	RetrievalConfiguration *kbRetrievalConfig      `json:"retrievalConfiguration,omitempty"`
+}
+
+type kbQuery struct {
+	Text string `json:"text"`
+}
+
+type kbRetrievalConfig struct {
+	VectorSearchConfiguration kbVectorConfig `json:"vectorSearchConfiguration"`
+}
+
+type kbVectorConfig struct {
+	NumberOfResults int `json:"numberOfResults"`
+}
+
+type kbRetrieveResponse struct {
+	RetrievedReferences []kbReference `json:"retrievedReferences"`
+}
+
+type kbReference struct {
+	Content  kbContent         `json:"content"`
+	Metadata map[string]interface{} `json:"metadata"`
+}
+
+type kbContent struct {
+	Text string `json:"text"`
+}
+
+// Retrieve will query the Bedrock Knowledge Base and return relevant author metadata
+func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
+	if p.KnowledgeBaseID == "" {
+		return nil, nil
+	}
+
+	reqBody := kbRetrieveRequest{
+		RetrievalQuery: kbQuery{Text: query},
+		RetrievalConfiguration: &kbRetrievalConfig{
+			VectorSearchConfiguration: kbVectorConfig{
+				NumberOfResults: 5,
+			},
+		},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal retrieve request: %w", err)
+	}
+
+	// Sign and call Bedrock Agent Runtime
+	url := fmt.Sprintf("https://bedrock-agent-runtime.%s.amazonaws.com/knowledgebases/%s/retrieve", p.Region, p.KnowledgeBaseID)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create retrieve request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	creds, err := p.Config.Credentials.Retrieve(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+
+	hash := sha256.Sum256(jsonBody)
+	payloadHash := hex.EncodeToString(hash[:])
+
+	if err := p.Signer.SignHTTP(context.TODO(), creds, req, payloadHash, "bedrock", p.Region, time.Now()); err != nil {
+		return nil, fmt.Errorf("failed to sign retrieve request: %w", err)
+	}
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to invoke bedrock retrieve: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("bedrock retrieve returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var kbResp kbRetrieveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&kbResp); err != nil {
+		return nil, fmt.Errorf("failed to decode retrieve response: %w", err)
+	}
+
+	results := []string{}
+	for _, ref := range kbResp.RetrievedReferences {
+		// Include author name from metadata if present
+		author := ""
+		if val, ok := ref.Metadata["author_name"]; ok {
+			author = fmt.Sprintf("%v", val)
+		}
+		
+		// If we have author name, use it; otherwise snippets of text (less ideal for suggestions)
+		if author != "" {
+			results = append(results, author)
+		} else if len(ref.Content.Text) > 0 {
+			// fallback to a snippet if no metadata (shouldn't happen with our indexing)
+			results = append(results, ref.Content.Text)
+		}
+	}
+
+	return results, nil
 }
 
 // GetSuggestions will take a user query, optional prompt and existing author suggestions and refine the results using

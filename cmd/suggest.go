@@ -173,7 +173,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	authorRes, err := s.HandleAuthorSuggestionRequest()
 	if err != nil {
 		log.Printf("Author suggestion failed: %s", err.Error())
-		// Continue even if author search fails, AI might still work
 	}
 
 	existingSuggestions := []string{}
@@ -183,27 +182,45 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 
-	if s.req.AIPrompt == "" {
-		log.Printf("INFO: no api prompt specified; just use solr suggestions")
+	// 2. If no AI provider, just return authors
+	if s.svc.AIProvider == nil {
+		log.Printf("[DEBUG-FLOW] AIProvider is NIL. Skipping LLM step.")
 		if authorRes != nil {
 			res.Suggestions = authorRes.Suggestions
 		}
-		log.Printf("overall  : %v", len(res.Suggestions))
+		return res, nil
+	}
+
+	// 3. Optional Semantic Retrieval (Bedrock Knowledge Base)
+	kbSuggestions, err := s.svc.AIProvider.Retrieve(s.req.Query)
+	if err != nil {
+		log.Printf("Knowledge Base retrieval failed: %s", err.Error())
+	}
+	if len(kbSuggestions) > 0 {
+		log.Printf("[DEBUG-FLOW] Knowledge Base Authors: %v", kbSuggestions)
+		// De-duplicate and combine
+		existingMap := make(map[string]bool)
+		for _, s := range existingSuggestions {
+			existingMap[s] = true
+		}
+		for _, s := range kbSuggestions {
+			if !existingMap[s] {
+				existingSuggestions = append(existingSuggestions, s)
+				existingMap[s] = true
+			}
+		}
+	}
+
+	if s.req.AIPrompt == "" {
+		log.Printf("INFO: no api prompt specified; returning combined solr/kb authors")
+		for _, s := range existingSuggestions {
+			res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: s})
+		}
 		return res, nil
 	}
 
 	// LOG 1: Search Context
-	log.Printf("[DEBUG-FLOW] 1. Search Context (Existing Authors): %v", existingSuggestions)
-
-	// 2. If no AI provider, just return authors
-	if s.svc.AIProvider == nil {
-		log.Printf("[DEBUG-FLOW] AIProvider is NIL. Skipping LLM step. (Check startup logs for initialization errors)")
-		if authorRes != nil {
-			res.Suggestions = authorRes.Suggestions
-		}
-		log.Printf("overall  : %v", len(res.Suggestions))
-		return res, nil
-	}
+	log.Printf("[DEBUG-FLOW] 1. Search Context (Existing Authors + KB): %v", existingSuggestions)
 
 	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, s.req.AIPrompt, existingSuggestions)
 	if err != nil {

@@ -51,10 +51,11 @@ type serviceConfigSolr struct {
 }
 
 type serviceConfigAI struct {
-	Provider string `json:"provider,omitempty"`
-	Key      string `json:"key,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Model    string `json:"model,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Key             string `json:"key,omitempty"`
+	URL             string `json:"url,omitempty"`
+	Model           string `json:"model,omitempty"`
+	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
 }
 
 type serviceConfig struct {
@@ -111,11 +112,16 @@ func loadConfig() *serviceConfig {
 		cfg.Solr.Host = host
 	}
 
+	if kbID := os.Getenv(envPrefix + "_BEDROCK_KB_ID"); kbID != "" {
+		cfg.AI.KnowledgeBaseID = kbID
+	}
+
 	// Default AI config if not provided (Failover for Dev/Staging without Env Vars)
 	if cfg.AI.Provider == "" {
-		log.Printf("[CONFIG] AI config missing, applying DEFAULTS: Provider=bedrock, Model=google.gemma-3-4b-it")
+		log.Printf("[CONFIG] AI config missing, applying DEFAULTS: Provider=bedrock, Model=google.gemma-3-4b-it, KB=ANITQDQQXN")
 		cfg.AI.Provider = "bedrock"
 		cfg.AI.Model = "google.gemma-3-4b-it"
+		cfg.AI.KnowledgeBaseID = "ANITQDQQXN"
 	}
 
 	bytes, err := json.Marshal(cfg)
