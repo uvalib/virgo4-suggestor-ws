@@ -115,7 +115,7 @@ type kbVectorConfig struct {
 }
 
 type kbRetrieveResponse struct {
-	RetrievedReferences []kbReference `json:"retrievedReferences"`
+	RetrievedReferences []kbReference `json:"retrievalResults"`
 }
 
 type kbReference struct {
@@ -173,15 +173,21 @@ func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read retrieve response body: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("bedrock retrieve returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var kbResp kbRetrieveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&kbResp); err != nil {
+	if err := json.Unmarshal(bodyBytes, &kbResp); err != nil {
 		return nil, fmt.Errorf("failed to decode retrieve response: %w", err)
 	}
+
+	log.Printf("[KB] retrieved %d references from Knowledge Base", len(kbResp.RetrievedReferences))
 
 	results := []string{}
 	for _, ref := range kbResp.RetrievedReferences {

@@ -107,9 +107,16 @@ func loadConfig() *serviceConfig {
 		os.Exit(1)
 	}
 
-	// optional convenience override to simplify terraform config
 	if host := os.Getenv(envPrefix + "_SOLR_HOST"); host != "" {
 		cfg.Solr.Host = host
+	}
+
+	if port := os.Getenv(envPrefix + "_PORT"); port != "" {
+		cfg.Service.Port = port
+	}
+
+	if cfg.Service.Port == "" {
+		cfg.Service.Port = "8080"
 	}
 
 	if kbID := os.Getenv(envPrefix + "_BEDROCK_KB_ID"); kbID != "" {

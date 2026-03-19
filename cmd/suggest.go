@@ -172,7 +172,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	// 1. Get existing Solr-based author suggestions
 	authorRes, err := s.HandleAuthorSuggestionRequest()
 	if err != nil {
-		log.Printf("Author suggestion failed: %s", err.Error())
+		log.Printf("WARNING: Solr author suggestion failed: %v. Proceeding with KB only.", err)
+		// If an error occurs, authorRes will be nil or an empty response,
+		// so existingSuggestions will correctly be initialized as empty below.
 	}
 
 	existingSuggestions := []string{}
@@ -182,104 +184,72 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 
-	// 2. If no AI provider, just return authors
-	if s.svc.AIProvider == nil {
-		log.Printf("[DEBUG-FLOW] AIProvider is NIL. Skipping LLM step.")
-		if authorRes != nil {
-			res.Suggestions = authorRes.Suggestions
+	// 2. Optional Semantic Retrieval (Bedrock Knowledge Base)
+	if s.svc.AIProvider != nil {
+		kbSuggestions, err := s.svc.AIProvider.Retrieve(s.req.Query)
+		if err != nil {
+			log.Printf("Knowledge Base retrieval failed: %s", err.Error())
 		}
-		return res, nil
-	}
-
-	// 3. Optional Semantic Retrieval (Bedrock Knowledge Base)
-	kbSuggestions, err := s.svc.AIProvider.Retrieve(s.req.Query)
-	if err != nil {
-		log.Printf("Knowledge Base retrieval failed: %s", err.Error())
-	}
-	if len(kbSuggestions) > 0 {
-		log.Printf("[DEBUG-FLOW] Knowledge Base Authors: %v", kbSuggestions)
-		// De-duplicate and combine
-		existingMap := make(map[string]bool)
-		for _, s := range existingSuggestions {
-			existingMap[s] = true
-		}
-		for _, s := range kbSuggestions {
-			if !existingMap[s] {
-				existingSuggestions = append(existingSuggestions, s)
+		if len(kbSuggestions) > 0 {
+			log.Printf("[KB] Found authors: %v", kbSuggestions)
+			// De-duplicate and combine
+			existingMap := make(map[string]bool)
+			for _, s := range existingSuggestions {
 				existingMap[s] = true
+			}
+			for _, s := range kbSuggestions {
+				if !existingMap[s] {
+					existingSuggestions = append(existingSuggestions, s)
+					existingMap[s] = true
+				}
 			}
 		}
 	}
 
-	if s.req.AIPrompt == "" {
-		log.Printf("INFO: no api prompt specified; returning combined solr/kb authors")
-		for _, s := range existingSuggestions {
-			res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: s})
-		}
-		return res, nil
-	}
-
-	// LOG 1: Search Context
-	log.Printf("[DEBUG-FLOW] 1. Search Context (Existing Authors + KB): %v", existingSuggestions)
-
-	aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, s.req.AIPrompt, existingSuggestions)
-	if err != nil {
-		log.Printf("ERROR: ai provider failed: %s", err.Error())
-		// Fallback to existing suggestions
-		if authorRes != nil {
-			res.Suggestions = authorRes.Suggestions
-		}
-		return res, nil
-	}
-
-	// LOG 2: AI Response
-	log.Printf("[DEBUG-FLOW] 2. LLM Response (Raw Suggestions): %v", aiRes.Suggestions)
-	if aiRes.DidYouMean != "" {
-		log.Printf("[DEBUG-FLOW]    LLM DidYouMean: %s", aiRes.DidYouMean)
-	}
-
-	// 4. Verify AI suggestions
-	// We trust the "DidYouMean" from AI mostly, but suggestions should be verified
-	verifiedSuggestions := []Suggestion{}
-
-	// If DidYouMean is present, we can add it or return it.
-	// The current API structure doesn't support 'didYouMean' field natively in SuggestedSearch?
-	// The client expects {type, value}.
-	// If didYouMean is present, maybe add it as a "spelling" or "correction" type?
-	// But client might not render it.
-	// For now, focusing on the 'suggestions' list.
-
-	// Use a channel for concurrent verification
-	type resultCheck struct {
-		term  string
-		valid bool
-	}
-	checkChan := make(chan resultCheck, len(aiRes.Suggestions))
-
-	for _, term := range aiRes.Suggestions {
-		go func(t string) {
-			valid := s.verifySuggestionResults(t)
-			checkChan <- resultCheck{term: t, valid: valid}
-		}(term)
-	}
-
-	resultsMap := make(map[string]bool)
-	for i := 0; i < len(aiRes.Suggestions); i++ {
-		r := <-checkChan
-		resultsMap[r.term] = r.valid
-	}
-
-	for _, term := range aiRes.Suggestions {
-		if resultsMap[term] {
-			// Force type to "author" as requested
-			verifiedSuggestions = append(verifiedSuggestions, Suggestion{Type: "author", Value: term})
+	// 3. Always use AI refinement if a provider is available
+	if s.svc.AIProvider != nil {
+		log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors", len(existingSuggestions))
+		aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, s.req.AIPrompt, existingSuggestions)
+		if err != nil {
+			log.Printf("ERROR: AI refinement failed: %s. Falling back to simple suggestions.", err.Error())
+		} else {
+			// LOG 2: AI Response
+			log.Printf("[DEBUG-FLOW] 2. LLM Response (Raw Suggestions): %v", aiRes.Suggestions)
+			
+			// 4. Verify AI suggestions
+			verifiedSuggestions := []Suggestion{}
+			
+			// Use a channel for concurrent verification
+			type resultCheck struct {
+				term  string
+				valid bool
+			}
+			checkChan := make(chan resultCheck, len(aiRes.Suggestions))
+			for _, term := range aiRes.Suggestions {
+				go func(t string) {
+					valid := s.verifySuggestionResults(t)
+					checkChan <- resultCheck{term: t, valid: valid}
+				}(term)
+			}
+			resultsMap := make(map[string]bool)
+			for i := 0; i < len(aiRes.Suggestions); i++ {
+				r := <-checkChan
+				resultsMap[r.term] = r.valid
+			}
+			for _, term := range aiRes.Suggestions {
+				if resultsMap[term] {
+					verifiedSuggestions = append(verifiedSuggestions, Suggestion{Type: "author", Value: term})
+				}
+			}
+			res.Suggestions = verifiedSuggestions
+			return res, nil
 		}
 	}
 
-	res.Suggestions = verifiedSuggestions
-
-	log.Printf("overall  : %v", len(res.Suggestions))
-
+	// 5. Fallback: Return combined authors directly if AI fails or is missing
+	for _, s := range existingSuggestions {
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: s})
+	}
 	return res, nil
 }
 
