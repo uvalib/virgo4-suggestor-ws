@@ -123,13 +123,19 @@ func loadConfig() *serviceConfig {
 		cfg.AI.KnowledgeBaseID = kbID
 	}
 
-	// Default AI config if not provided (Failover for Dev/Staging without Env Vars)
+	// Default AI config if not provided
 	if cfg.AI.Provider == "" {
-		log.Printf("[CONFIG] AI config missing, applying DEFAULTS: Provider=bedrock, Model=google.gemma-3-4b-it, KB=ANITQDQQXN")
 		cfg.AI.Provider = "bedrock"
+	}
+	if cfg.AI.Model == "" {
 		cfg.AI.Model = "google.gemma-3-4b-it"
+	}
+	if cfg.AI.KnowledgeBaseID == "" {
 		cfg.AI.KnowledgeBaseID = "ANITQDQQXN"
 	}
+
+	log.Printf("[CONFIG] AI config: Provider=%s, Model=%s, KB=%s", 
+		cfg.AI.Provider, cfg.AI.Model, cfg.AI.KnowledgeBaseID)
 
 	bytes, err := json.Marshal(cfg)
 	if err != nil {
