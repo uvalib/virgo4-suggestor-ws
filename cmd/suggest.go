@@ -186,7 +186,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	// 2. Optional Semantic Retrieval (Bedrock Knowledge Base)
 	if s.svc.AIProvider != nil {
-		kbSuggestions, err := s.svc.AIProvider.Retrieve(s.req.Query)
+		kbSuggestions, err := s.svc.AIProvider.Retrieve(s.parsedQuery)
 		if err != nil {
 			log.Printf("Knowledge Base retrieval failed: %s", err.Error())
 		}
