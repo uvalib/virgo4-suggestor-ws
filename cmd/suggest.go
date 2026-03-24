@@ -183,33 +183,87 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			existingSuggestions = append(existingSuggestions, sugg.Value)
 		}
 	}
-
 	// 2. Optional Semantic Retrieval (Bedrock Knowledge Base)
+	kbSuggestions := []string{}
 	if s.svc.AIProvider != nil {
-		kbSuggestions, err := s.svc.AIProvider.Retrieve(s.parsedQuery)
+		var err error
+		kbSuggestions, err = s.svc.AIProvider.Retrieve(s.parsedQuery)
 		if err != nil {
 			log.Printf("Knowledge Base retrieval failed: %s", err.Error())
 		}
 		if len(kbSuggestions) > 0 {
 			log.Printf("[KB] Found authors: %v", kbSuggestions)
-			// De-duplicate and combine
-			existingMap := make(map[string]bool)
-			for _, s := range existingSuggestions {
-				existingMap[s] = true
-			}
-			for _, s := range kbSuggestions {
-				if !existingMap[s] {
-					existingSuggestions = append(existingSuggestions, s)
-					existingMap[s] = true
-				}
-			}
 		}
 	}
 
-	// 3. Always use AI refinement if a provider is available
+	// 3. Combine and Re-rank based on resource counts
+	combinedAuthors := []string{}
+	existingMap := make(map[string]bool)
+	for _, as := range existingSuggestions {
+		if !existingMap[as] {
+			combinedAuthors = append(combinedAuthors, as)
+			existingMap[as] = true
+		}
+	}
+	for _, ks := range kbSuggestions {
+		if !existingMap[ks] {
+			combinedAuthors = append(combinedAuthors, ks)
+			existingMap[ks] = true
+		}
+	}
+
+	// Get counts and sort
+	var finalSortedSuggestions []string
+	counts := make(map[string]int)
+	if len(combinedAuthors) > 0 {
+		var err error
+		counts, err = s.GetAuthorResourceCounts(combinedAuthors)
+		if err != nil {
+			log.Printf("WARNING: Failed to get resource counts: %v. Using original order.", err)
+			finalSortedSuggestions = combinedAuthors
+		} else {
+			// Sort combining Solr score logic (if we had it) and count.
+			// For now, primary sort is resource count descending.
+			sort.Slice(combinedAuthors, func(i, j int) bool {
+				countI := counts[combinedAuthors[i]]
+				countJ := counts[combinedAuthors[j]]
+				if countI != countJ {
+					return countI > countJ
+				}
+				return combinedAuthors[i] < combinedAuthors[j] // alpha stable
+			})
+			finalSortedSuggestions = combinedAuthors
+			
+			// Log the top 5 after re-ranking
+			limit := 5
+			if len(finalSortedSuggestions) < 5 {
+				limit = len(finalSortedSuggestions)
+			}
+			log.Printf("[RANK] Top %d authors after resource-count re-ranking: %v", limit, finalSortedSuggestions[:limit])
+		}
+	} else {
+		finalSortedSuggestions = []string{}
+	}
+
+	// 4. Always use AI refinement if a provider is available
 	if s.svc.AIProvider != nil {
-		log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors", len(existingSuggestions))
-		aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, existingSuggestions)
+		log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors", len(finalSortedSuggestions))
+		
+		// Optional: Update prompt context with counts for the LLM
+		// Construct a context string with counts if we have them
+		authorContext := []string{}
+		if len(finalSortedSuggestions) > 0 {
+			for _, name := range finalSortedSuggestions {
+				count := counts[name]
+				if count > 0 {
+					authorContext = append(authorContext, fmt.Sprintf("%s (%d resources)", name, count))
+				} else {
+					authorContext = append(authorContext, name)
+				}
+			}
+		}
+
+		aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, authorContext)
 		if err != nil {
 			log.Printf("ERROR: AI refinement failed: %s. Falling back to simple suggestions.", err.Error())
 		} else {
@@ -247,10 +301,55 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	// 5. Fallback: Return combined authors directly if AI fails or is missing
-	for _, s := range existingSuggestions {
+	for _, s := range finalSortedSuggestions {
 		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: s})
 	}
 	return res, nil
+}
+
+// GetAuthorResourceCounts retrieves document counts for a list of authors from Solr
+func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[string]int, error) {
+	counts := make(map[string]int)
+	if len(authors) == 0 {
+		return counts, nil
+	}
+
+	// Construct OR query for exact author facets
+	var queryParts []string
+	for _, a := range authors {
+		// Escape special characters and quote
+		escaped := strings.ReplaceAll(a, "\"", "\\\"")
+		queryParts = append(queryParts, fmt.Sprintf("\"%s\"", escaped))
+	}
+	q := fmt.Sprintf("author_facet_f:(%s)", strings.Join(queryParts, " OR "))
+
+	solrReq := SolrRequest{}
+	solrReq.json.Params = SolrRequestParams{
+		Q:          q,
+		Rows:       0, // We only want facets
+		Facet:      true,
+		FacetField: []string{"author_facet_f"},
+		FacetLimit: -1, // No limit to get all requested authors
+		FacetMin:   1,
+	}
+
+	solrRes, err := s.SolrQuery(&solrReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse facet fields flat list: [name1, count1, name2, count2, ...]
+	if facetData, ok := solrRes.FacetCounts.FacetFields["author_facet_f"]; ok {
+		for i := 0; i < len(facetData); i += 2 {
+			name, ok1 := facetData[i].(string)
+			countFloat, ok2 := facetData[i+1].(float64) // JSON numbers are float64
+			if ok1 && ok2 {
+				counts[name] = int(countFloat)
+			}
+		}
+	}
+
+	return counts, nil
 }
 
 // verifySuggestionResults checks if a query returns > 0 hits in Solr

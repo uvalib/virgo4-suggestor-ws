@@ -22,6 +22,10 @@ type SolrRequestParams struct {
 	Qf         string   `json:"qf,omitempty"`
 	Sort       string   `json:"sort,omitempty"`
 	DebugQuery string   `json:"debugQuery,omitempty"`
+	Facet      bool     `json:"facet,omitempty"`
+	FacetField []string `json:"facet.field,omitempty"`
+	FacetLimit int      `json:"facet.limit,omitempty"`
+	FacetMin   int      `json:"facet.mincount,omitempty"`
 }
 
 // SolrRequestJSON contains the data for a JSON Solr API request
@@ -65,10 +69,16 @@ type SolrError struct {
 	Code     int      `json:"code,omitempty"`
 }
 
+// SolrFacetCounts contains the facet_counts portion of the response from the Solr API
+type SolrFacetCounts struct {
+	FacetFields map[string][]interface{} `json:"facet_fields,omitempty"`
+}
+
 // SolrResponse contains the response from the Solr API
 type SolrResponse struct {
 	ResponseHeader SolrResponseHeader    `json:"responseHeader,omitempty"`
 	Response       SolrResponseDocuments `json:"response,omitempty"`
+	FacetCounts    SolrFacetCounts       `json:"facet_counts,omitempty"`
 	Error          SolrError             `json:"error,omitempty"`
 	Debug          interface{}           `json:"debug,omitempty"`
 	Status         string                `json:"status,omitempty"`
