@@ -209,7 +209,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	// 3. Always use AI refinement if a provider is available
 	if s.svc.AIProvider != nil {
 		log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors", len(existingSuggestions))
-		aiRes, err := s.svc.AIProvider.GetSuggestions(s.req.Query, s.req.AIPrompt, existingSuggestions)
+		aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, existingSuggestions)
 		if err != nil {
 			log.Printf("ERROR: AI refinement failed: %s. Falling back to simple suggestions.", err.Error())
 		} else {

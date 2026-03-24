@@ -137,7 +137,7 @@ func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 		RetrievalQuery: kbQuery{Text: query},
 		RetrievalConfiguration: &kbRetrievalConfig{
 			VectorSearchConfiguration: kbVectorConfig{
-				NumberOfResults: 10,
+				NumberOfResults: 40,
 			},
 		},
 	}
