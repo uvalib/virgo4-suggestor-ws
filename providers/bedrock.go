@@ -85,12 +85,18 @@ func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 	for _, ref := range resp.RetrievalResults {
 		author := ""
 		if val, ok := ref.Metadata["author_name"]; ok {
-			// In SDK v2, metadata values are types.MetadataValue (which can be string, boolean, number)
-			// But for simplicity in this specific context, we'll try to get it as string if possible.
-			// Actually, the SDK v2 Retrieve response metadata is map[string]types.MetadataValue
-			// But the types.MetadataValue is an interface or a specific struct?
-			// Checking types: MetadataValue is a struct with StringValue, BooleanValue, etc.
-			author = fmt.Sprintf("%v", val)
+			// val is bedrockagentruntime/document.Interface. 
+			// Use json.Marshal/Unmarshal to extract the inner string value.
+			if bytes, err := json.Marshal(val); err == nil {
+				var strVal string
+				if err := json.Unmarshal(bytes, &strVal); err == nil {
+					author = strVal
+				}
+			}
+			// If unmarshal failed or not a string, fallback to fmt.Sprintf
+			if author == "" {
+				author = fmt.Sprintf("%v", val)
+			}
 		}
 		
 		if author != "" {
