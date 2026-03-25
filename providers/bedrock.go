@@ -86,15 +86,11 @@ func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 		author := ""
 		if val, ok := ref.Metadata["author_name"]; ok {
 			// val is bedrockagentruntime/document.Interface. 
-			// Use json.Marshal/Unmarshal to extract the inner string value.
-			if bytes, err := json.Marshal(val); err == nil {
-				var strVal string
-				if err := json.Unmarshal(bytes, &strVal); err == nil {
-					author = strVal
-				}
-			}
-			// If unmarshal failed or not a string, fallback to fmt.Sprintf
-			if author == "" {
+			// Use its UnmarshalSmithyDocument method to decode to a string.
+			var strVal string
+			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
+				author = strVal
+			} else {
 				author = fmt.Sprintf("%v", val)
 			}
 		}
