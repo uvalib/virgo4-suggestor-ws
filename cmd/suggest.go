@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/uvalib/virgo4-parser/v4parser"

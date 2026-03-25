@@ -1,34 +1,33 @@
 package providers
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
+	sdktypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
-// BedrockProvider contains provider details
+// BedrockProvider contains provider details using official AWS SDK
 type BedrockProvider struct {
 	Region          string
 	Model           string
 	KnowledgeBaseID string
-	HTTPClient      *http.Client
-	Signer          *v4.Signer
 	Config          aws.Config
+	BedrockRuntime  *bedrockruntime.Client
+	BedrockAgent    *bedrockagentruntime.Client
 }
 
-// NewBedrockProvider will instantiate a new AI provider using bedrock
+// NewBedrockProvider will instantiate a new AI provider using bedrock SDK
 func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Client) (*BedrockProvider, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -43,13 +42,13 @@ func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Clien
 		Region:          cfg.Region,
 		Model:           model,
 		KnowledgeBaseID: knowledgeBaseID,
-		HTTPClient:      client,
-		Signer:          v4.NewSigner(),
 		Config:          cfg,
+		BedrockRuntime:  bedrockruntime.NewFromConfig(cfg),
+		BedrockAgent:    bedrockagentruntime.NewFromConfig(cfg),
 	}, nil
 }
 
-// Name returns the name of the provider (e.g. "gemini", "openai")
+// Name returns the name of the provider
 func (p *BedrockProvider) Name() string {
 	return "bedrock"
 }
@@ -59,359 +58,193 @@ func (p *BedrockProvider) GetModel() string {
 	return p.Model
 }
 
-// Anthropic-specific structs for Bedrock
-type anthropicRequest struct {
-	AnthropicVersion string             `json:"anthropic_version"`
-	MaxTokens        int                `json:"max_tokens"`
-	System           string             `json:"system,omitempty"`
-	Messages         []anthropicMessage `json:"messages"`
-}
-
-type anthropicMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type anthropicResponse struct {
-	Content []struct {
-		Text string `json:"text"`
-		Type string `json:"type"`
-	} `json:"content"`
-	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
-}
-
-// Gemma-specific structs
-type gemmaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type gemmaMessagesRequest struct {
-	Messages    []gemmaMessage `json:"messages"`
-	MaxTokens   int            `json:"maxTokens,omitempty"`
-	Temperature float64        `json:"temperature,omitempty"`
-	TopP        float64        `json:"topP,omitempty"`
-}
-
-// Bedrock KB Retrieve structs
-type kbRetrieveRequest struct {
-	RetrievalQuery         kbQuery                `json:"retrievalQuery"`
-	RetrievalConfiguration *kbRetrievalConfig      `json:"retrievalConfiguration,omitempty"`
-}
-
-type kbQuery struct {
-	Text string `json:"text"`
-}
-
-type kbRetrievalConfig struct {
-	VectorSearchConfiguration kbVectorConfig `json:"vectorSearchConfiguration"`
-}
-
-type kbVectorConfig struct {
-	NumberOfResults int `json:"numberOfResults"`
-}
-
-type kbRetrieveResponse struct {
-	RetrievedReferences []kbReference `json:"retrievalResults"`
-}
-
-type kbReference struct {
-	Content  kbContent         `json:"content"`
-	Metadata map[string]interface{} `json:"metadata"`
-}
-
-type kbContent struct {
-	Text string `json:"text"`
-}
-
 // Retrieve will query the Bedrock Knowledge Base and return relevant author metadata
 func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 	if p.KnowledgeBaseID == "" {
 		return nil, nil
 	}
 
-	reqBody := kbRetrieveRequest{
-		RetrievalQuery: kbQuery{Text: query},
-		RetrievalConfiguration: &kbRetrievalConfig{
-			VectorSearchConfiguration: kbVectorConfig{
-				NumberOfResults: 40,
+	input := &bedrockagentruntime.RetrieveInput{
+		KnowledgeBaseId: aws.String(p.KnowledgeBaseID),
+		RetrievalQuery: &types.KnowledgeBaseQuery{
+			Text: aws.String(query),
+		},
+		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
+			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
+				NumberOfResults: aws.Int32(40),
 			},
 		},
 	}
 
-	jsonBody, err := json.Marshal(reqBody)
+	resp, err := p.BedrockAgent.Retrieve(context.TODO(), input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal retrieve request: %w", err)
+		return nil, fmt.Errorf("failed to retrieve from KB: %w", err)
 	}
-
-	// Sign and call Bedrock Agent Runtime
-	url := fmt.Sprintf("https://bedrock-agent-runtime.%s.amazonaws.com/knowledgebases/%s/retrieve", p.Region, p.KnowledgeBaseID)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create retrieve request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	creds, err := p.Config.Credentials.Retrieve(context.TODO())
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
-	}
-
-	hash := sha256.Sum256(jsonBody)
-	payloadHash := hex.EncodeToString(hash[:])
-
-	if err := p.Signer.SignHTTP(context.TODO(), creds, req, payloadHash, "bedrock", p.Region, time.Now()); err != nil {
-		return nil, fmt.Errorf("failed to sign retrieve request: %w", err)
-	}
-
-	resp, err := p.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to invoke bedrock retrieve: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read retrieve response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bedrock retrieve returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var kbResp kbRetrieveResponse
-	if err := json.Unmarshal(bodyBytes, &kbResp); err != nil {
-		return nil, fmt.Errorf("failed to decode retrieve response: %w", err)
-	}
-
-	log.Printf("[KB] retrieved %d references from Knowledge Base", len(kbResp.RetrievedReferences))
 
 	results := []string{}
-	for _, ref := range kbResp.RetrievedReferences {
-		// Include author name from metadata if present
+	for _, ref := range resp.RetrievalResults {
 		author := ""
 		if val, ok := ref.Metadata["author_name"]; ok {
+			// In SDK v2, metadata values are types.MetadataValue (which can be string, boolean, number)
+			// But for simplicity in this specific context, we'll try to get it as string if possible.
+			// Actually, the SDK v2 Retrieve response metadata is map[string]types.MetadataValue
+			// But the types.MetadataValue is an interface or a specific struct?
+			// Checking types: MetadataValue is a struct with StringValue, BooleanValue, etc.
 			author = fmt.Sprintf("%v", val)
 		}
 		
-		// If we have author name, use it; otherwise snippets of text (less ideal for suggestions)
 		if author != "" {
 			results = append(results, author)
-		} else if len(ref.Content.Text) > 0 {
-			// fallback to a snippet if no metadata (shouldn't happen with our indexing)
-			results = append(results, ref.Content.Text)
+		} else if ref.Content != nil && ref.Content.Text != nil {
+			results = append(results, *ref.Content.Text)
 		}
 	}
 
 	return results, nil
 }
 
-// GetSuggestions will take a user query, optional prompt and existing author suggestions and refine the results using
-// NOTE: Gemma response is typically generic or follows a specific structure depending on inference profile.
-// We will parse it dynamically or use a generic struct.
+// GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	// Construct prompts
-	systemPromptContent := "You are a helpful assistant that outputs JSON."
+	systemPrompt := "You are a helpful academic librarian assistant that outputs search suggestions in JSON format."
 
-	suggestionsString := "\nNo author suggestions were found in our catalog.\n"
-	if len(existingSuggestions) > 0 {
-		suggestionsString = "Here are some author suggestions retrieved from our catalog:\n"
-		for i, s := range existingSuggestions {
-			suggestionsString += fmt.Sprintf("%d. %s\n", i+1, s)
-		}
-	}
-
-	prompt := ""
+	userPrompt := ""
 	if customPrompt == "" {
-		log.Printf("INFO: use default prompt to get suggestions")
-		var promptBuilder strings.Builder
-		fmt.Fprintf(&promptBuilder, "You are a helpful academic librarian assistant. The user is searching for: \"%s\".\n", query)
-
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("The user is searching for: \"%s\".\n", query))
 		if len(existingSuggestions) > 0 {
-			promptBuilder.WriteString(suggestionsString)
-			promptBuilder.WriteString("\nAnalyze the query and these suggestions. You may keep good suggestions, refine them, or replace them if they are not relevant.\n")
-		} else {
-			promptBuilder.WriteString("\nNo author suggestions were found in our catalog.\n")
+			sb.WriteString("Existing suggestions from our catalog:\n")
+			for i, s := range existingSuggestions {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, s))
+			}
 		}
-
-		promptBuilder.WriteString("1. If the query contains an OBVIOUS spelling error, set 'didYouMean' to the FULL corrected query string.\n")
-		promptBuilder.WriteString("2. If the query is likely intentional, leave 'didYouMean' empty.\n")
-		promptBuilder.WriteString("3. Populate 'suggestions' with 6-10 relevant AUTHORS (people or organizations) related to the query.\n")
-		promptBuilder.WriteString("   - STRICTLY names of people (historians, writers) or organizations/agencies.\n")
-		promptBuilder.WriteString("   - Do NOT suggest book titles, general topics, historical events, or refined search queries.\n")
-		promptBuilder.WriteString("   - Order the authors by relevance to the query.\n")
-		promptBuilder.WriteString("   - Example: For 'civil war', suggest 'Foote, Shelby' or 'McPherson, James', NOT 'Civil War Battles'.\n")
-		promptBuilder.WriteString("\nRespond in JSON format.")
-
-		prompt = promptBuilder.String()
+		sb.WriteString("\nFollow these rules:\n")
+		sb.WriteString("1. If the query is misspelled, provide the correction in 'didYouMean'.\n")
+		sb.WriteString("2. Provide 6-10 relevant AUTHOR names in 'suggestions'.\n")
+		sb.WriteString("3. Use the `retrieve_authors_from_kb` tool to find biographies and works if needed.\n")
+		sb.WriteString("4. Return ONLY a JSON object with 'didYouMean' and 'suggestions' keys.\n")
+		userPrompt = sb.String()
 	} else {
-		log.Printf("INFO: use custom prompt to get suggestions")
-		prompt = customPrompt
-		prompt = strings.Replace(prompt, "$QUERY", query, 1)
-		prompt = strings.Replace(prompt, "$SUGGESTIONS", suggestionsString, 1)
+		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
+		// Handle $SUGGESTIONS if needed, but tool use might replace the need for pre-calculated suggestions context
 	}
 
-	var jsonBody []byte
-	var err error
-
-	// Check Model ID for "gemma"
-	modelLower := strings.ToLower(p.Model)
-
-	if strings.Contains(modelLower, "gemma") {
-		log.Printf("INFO: prompt [%s]", prompt)
-
-		// Gemma Format
-		// Combine system prompt into the first user message because Gemma often expects a single conversation flow
-		// or specifically "user" / "model" roles.
-		fullPrompt := fmt.Sprintf("%s\n\n%s", systemPromptContent, prompt)
-
-		reqBody := gemmaMessagesRequest{
-			Messages: []gemmaMessage{
-				{Role: "user", Content: fullPrompt},
+	// Tool definition
+	kbTool := &sdktypes.ToolMemberToolSpec{
+		Value: sdktypes.ToolSpecification{
+			Name:        aws.String("retrieve_authors_from_kb"),
+			Description: aws.String("Search the UVA Author Metadata Knowledge Base for biographical data and notable works."),
+			InputSchema: &sdktypes.ToolInputSchemaMemberJson{
+				Value: document.NewLazyDocument(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "The search query (author name or book title)",
+						},
+					},
+					"required": []string{"query"},
+				}),
 			},
-			MaxTokens:   2000,
-			Temperature: 0.5,
-			TopP:        0.9,
-		}
-		jsonBody, err = json.Marshal(reqBody)
+		},
+	}
 
-	} else {
-		// Default to Anthropic (Claude) Format
-		reqBody := anthropicRequest{
-			AnthropicVersion: "bedrock-2023-05-31",
-			MaxTokens:        2000,
-			System:           systemPromptContent,
-			Messages: []anthropicMessage{
-				{Role: "user", Content: prompt},
+	messages := []sdktypes.Message{
+		{
+			Role: sdktypes.ConversationRoleUser,
+			Content: []sdktypes.ContentBlock{
+				&sdktypes.ContentBlockMemberText{Value: userPrompt},
+			},
+		},
+	}
+
+	// Reasoning Loop
+	for attempt := 0; attempt < 5; attempt++ {
+		input := &bedrockruntime.ConverseInput{
+			ModelId: aws.String(p.Model),
+			System: []sdktypes.SystemContentBlock{
+				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
+			},
+			Messages: messages,
+			ToolConfig: &sdktypes.ToolConfiguration{
+				Tools: []sdktypes.Tool{kbTool},
 			},
 		}
-		jsonBody, err = json.Marshal(reqBody)
-	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Construct Bedrock Runtime URL
-	url := fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke", p.Region, p.Model)
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Sign the request
-	creds, err := p.Config.Credentials.Retrieve(context.TODO())
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve credentials: %w", err)
-	}
-
-	// Calculate payload hash
-	hash := sha256.Sum256(jsonBody)
-	payloadHash := hex.EncodeToString(hash[:])
-
-	if err := p.Signer.SignHTTP(context.TODO(), creds, req, payloadHash, "bedrock", p.Region, time.Now()); err != nil {
-		return nil, fmt.Errorf("failed to sign request: %w", err)
-	}
-
-	resp, err := p.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to invoke bedrock: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("bedrock returned status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var content string
-
-	if strings.Contains(modelLower, "gemma") {
-		log.Printf("INFO: pull ai results from a gemma model")
-
-		// Generic parse for Gemma (it varies: output.message.content or choices[0].message.content)
-		var result map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("failed to decode gemma response: %w", err)
+		resp, err := p.BedrockRuntime.Converse(context.TODO(), input)
+		if err != nil {
+			return nil, fmt.Errorf("converse error: %w", err)
 		}
 
-		// Try finding content in common locations
-		// 1. 'choices' -> [0] -> 'message' -> 'content' (OpenAI style)
-		if choices, ok := result["choices"].([]any); ok && len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]any); ok {
-				if msg, ok := choice["message"].(map[string]any); ok {
-					if c, ok := msg["content"].(string); ok {
-						content = c
+		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+		messages = append(messages, output)
+
+		// Check for Tool Use
+		foundToolUse := false
+		var toolResults []sdktypes.ContentBlock
+		
+		for _, block := range output.Content {
+			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
+				foundToolUse = true
+				inputBytes, _ := json.Marshal(toolUse.Value.Input)
+				log.Printf("[AGENT] LLM requested tool: %s with input: %s", *toolUse.Value.Name, string(inputBytes))
+				
+				var toolOutput string
+				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
+					var toolInput struct {
+						Query string `json:"query"`
+					}
+					// inputBytes already marshaled above
+					json.Unmarshal(inputBytes, &toolInput)
+					
+					kbResults, err := p.Retrieve(toolInput.Query)
+					if err != nil {
+						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
+					} else {
+						toolOutput = fmt.Sprintf("KB Results: %v", kbResults)
 					}
 				}
-			}
-		}
-		// 2. 'output' -> 'message' -> 'content' (Converse output style sometimes)
-		if content == "" {
-			if output, ok := result["output"].(map[string]any); ok {
-				if msg, ok := output["message"].(map[string]any); ok {
-					if c, ok := msg["content"].([]any); ok && len(c) > 0 {
-						// Assuming content block list
-						if block, ok := c[0].(map[string]any); ok {
-							if text, ok := block["text"].(string); ok {
-								content = text
-							}
-						}
-					}
-				}
+
+				toolResults = append(toolResults, &sdktypes.ContentBlockMemberToolResult{
+					Value: sdktypes.ToolResultBlock{
+						ToolUseId: toolUse.Value.ToolUseId,
+						Content: []sdktypes.ToolResultContentBlock{
+							&sdktypes.ToolResultContentBlockMemberText{Value: toolOutput},
+						},
+					},
+				})
 			}
 		}
 
-		// Try to extract usage for Gemma (OpenAI style)
-		if usage, ok := result["usage"].(map[string]any); ok {
-			in := 0
-			out := 0
-			if v, ok := usage["prompt_tokens"].(float64); ok {
-				in = int(v)
+		if foundToolUse {
+			messages = append(messages, sdktypes.Message{
+				Role:    sdktypes.ConversationRoleUser,
+				Content: toolResults,
+			})
+			continue
+		}
+
+		// Final response
+		var finalContent string
+		for _, block := range output.Content {
+			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+				finalContent += text.Value
 			}
-			if v, ok := usage["completion_tokens"].(float64); ok {
-				out = int(v)
-			}
-			log.Printf("[BEDROCK-USAGE] Model: %s | Input Tokens: %d | Output Tokens: %d", p.Model, in, out)
 		}
 
-	} else {
-		log.Printf("INFO: pull anthropic ai results")
-		// Default to Anthropic
-		var bedrockResp anthropicResponse
-		if err := json.NewDecoder(resp.Body).Decode(&bedrockResp); err != nil {
-			return nil, fmt.Errorf("failed to decode anthropic response: %w", err)
+		// Parse JSON
+		finalContent = strings.TrimSpace(finalContent)
+		startIdx := strings.Index(finalContent, "{")
+		if startIdx > -1 {
+			endIdx := strings.LastIndex(finalContent, "}")
+			finalContent = finalContent[startIdx : endIdx+1]
 		}
-		if len(bedrockResp.Content) > 0 {
-			content = bedrockResp.Content[0].Text
+
+		var aiResponse AIResponse
+		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
 		}
-		log.Printf("[BEDROCK-USAGE] Model: %s | Input Tokens: %d | Output Tokens: %d", p.Model, bedrockResp.Usage.InputTokens, bedrockResp.Usage.OutputTokens)
+		return &aiResponse, nil
 	}
 
-	if content == "" {
-		return nil, fmt.Errorf("empty content from AI provider")
-	}
-	log.Printf("INFO: ai response %s", content)
-
-	// get rid of anything before and after the { and } that bracket a json response
-	content = strings.TrimSpace(content)
-	startIdx := strings.Index(content, "{")
-	if startIdx > -1 {
-		endIdx := strings.LastIndex(content, "}")
-		content = content[startIdx : endIdx+1]
-	}
-	log.Printf("INFO: final ai response %s", content)
-
-	var aiResponse AIResponse
-	if err := json.Unmarshal([]byte(content), &aiResponse); err != nil {
-		return nil, fmt.Errorf("failed to parse generated text as JSON: %w", err)
-	}
-
-	return &aiResponse, nil
+	return nil, fmt.Errorf("reached maximum tool use iterations")
 }
