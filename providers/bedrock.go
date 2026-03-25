@@ -60,7 +60,7 @@ func (p *BedrockProvider) GetModel() string {
 }
 
 // Retrieve will query the Bedrock Knowledge Base and return relevant author metadata
-func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
+func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 	if p.KnowledgeBaseID == "" {
 		return nil, nil
 	}
@@ -72,7 +72,7 @@ func (p *BedrockProvider) Retrieve(query string) ([]string, error) {
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults: aws.Int32(40),
+				NumberOfResults: aws.Int32(int32(limit)),
 			},
 		},
 	}
@@ -135,14 +135,18 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	kbTool := &sdktypes.ToolMemberToolSpec{
 		Value: sdktypes.ToolSpecification{
 			Name:        aws.String("retrieve_authors_from_kb"),
-			Description: aws.String("Search the UVA Author Metadata Knowledge Base for biographical data and notable works."),
+			Description: aws.String("Search the UVA Author Knowledge Base. This database contains author names, detailed biographies, and lists of notable works. Use this to find authors related to specific topics, genres, or to disambiguate names."),
 			InputSchema: &sdktypes.ToolInputSchemaMemberJson{
 				Value: document.NewLazyDocument(map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"query": map[string]interface{}{
 							"type":        "string",
-							"description": "The search query (author name or book title)",
+							"description": "The search query (e.g. author name, book title, or topic)",
+						},
+						"limit": map[string]interface{}{
+							"type":        "integer",
+							"description": "Maximum number of results to return (default 20, max 50)",
 						},
 					},
 					"required": []string{"query"},
@@ -150,6 +154,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			},
 		},
 	}
+
+	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
+	log.Printf("[AGENT] User Prompt: %s", userPrompt)
 
 	messages := []sdktypes.Message{
 		{
@@ -190,24 +197,38 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		var toolResults []sdktypes.ContentBlock
 		
 		for _, block := range output.Content {
+			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+				log.Printf("[AGENT] Model Reasoning: %s", text.Value)
+			}
+
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
 				foundToolUse = true
 				inputBytes, _ := json.Marshal(toolUse.Value.Input)
-				log.Printf("[AGENT] LLM requested tool: %s with input: %s", *toolUse.Value.Name, string(inputBytes))
+				log.Printf("[AGENT] KB Tool Call: %s input: %s", *toolUse.Value.Name, string(inputBytes))
 				
 				var toolOutput string
 				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
 					var toolInput struct {
 						Query string `json:"query"`
+						Limit int    `json:"limit"`
 					}
 					// inputBytes already marshaled above
 					json.Unmarshal(inputBytes, &toolInput)
 					
-					kbResults, err := p.Retrieve(toolInput.Query)
+					// Default and clamp limit
+					if toolInput.Limit <= 0 {
+						toolInput.Limit = 20
+					}
+					if toolInput.Limit > 50 {
+						toolInput.Limit = 50
+					}
+					
+					kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
 					if err != nil {
 						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
 					} else {
 						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
+						log.Printf("[AGENT] KB Tool Result: found %d records", len(kbResults))
 					}
 				}
 
