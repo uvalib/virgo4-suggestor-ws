@@ -172,10 +172,12 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			},
 		}
 
+		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
 		resp, err := p.BedrockRuntime.Converse(context.TODO(), input)
 		if err != nil {
 			return nil, fmt.Errorf("converse error: %w", err)
 		}
+		log.Printf("[AGENT] Received Converse response. Stop reason: %v", resp.StopReason)
 
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
 		messages = append(messages, output)
@@ -202,7 +204,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 					if err != nil {
 						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
 					} else {
-						toolOutput = fmt.Sprintf("KB Results: %v", kbResults)
+						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
 					}
 				}
 

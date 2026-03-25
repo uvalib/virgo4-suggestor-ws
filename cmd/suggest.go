@@ -323,16 +323,14 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 		escaped := strings.ReplaceAll(a, "\"", "\\\"")
 		queryParts = append(queryParts, fmt.Sprintf("\"%s\"", escaped))
 	}
-	q := fmt.Sprintf("author_facet_f:(%s)", strings.Join(queryParts, " OR "))
+	q := fmt.Sprintf("phrase:(%s)", strings.Join(queryParts, " OR "))
 
 	solrReq := SolrRequest{}
 	solrReq.json.Params = SolrRequestParams{
 		Q:          q,
-		Rows:       0, // We only want facets
-		Facet:      true,
-		FacetField: []string{"author_facet_f"},
-		FacetLimit: -1, // No limit to get all requested authors
-		FacetMin:   1,
+		Rows:       len(authors), // Fetch all requested authors
+		Fl:         []string{"phrase", "count"},
+		Fq:         []string{"type:author"},
 	}
 
 	solrRes, err := s.SolrQuery(&solrReq)
@@ -340,15 +338,9 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 		return nil, err
 	}
 
-	// Parse facet fields flat list: [name1, count1, name2, count2, ...]
-	if facetData, ok := solrRes.FacetCounts.FacetFields["author_facet_f"]; ok {
-		for i := 0; i < len(facetData); i += 2 {
-			name, ok1 := facetData[i].(string)
-			countFloat, ok2 := facetData[i+1].(float64) // JSON numbers are float64
-			if ok1 && ok2 {
-				counts[name] = int(countFloat)
-			}
-		}
+	// Parse docs to get counts
+	for _, doc := range solrRes.Response.Docs {
+		counts[doc.Phrase] = doc.Count
 	}
 
 	return counts, nil
