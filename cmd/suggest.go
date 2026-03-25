@@ -269,8 +269,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		if err != nil {
 			log.Printf("ERROR: AI refinement failed: %s. Falling back to simple suggestions.", err.Error())
 		} else {
-			// LOG 2: AI Response
-			log.Printf("[DEBUG-FLOW] 2. LLM Response (Raw Suggestions): %v", aiRes.Suggestions)
+			log.Printf("[DEBUG-FLOW] 2. LLM Response: didYouMean='%s', suggestions=%v", aiRes.DidYouMean, aiRes.Suggestions)
 			
 			// 4. Verify AI suggestions
 			verifiedSuggestions := []Suggestion{}
@@ -284,6 +283,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			for _, term := range aiRes.Suggestions {
 				go func(t string) {
 					valid := s.verifySuggestionResults(t)
+					log.Printf("[VERIFY] '%s' valid: %v", t, valid)
 					checkChan <- resultCheck{term: t, valid: valid}
 				}(term)
 			}

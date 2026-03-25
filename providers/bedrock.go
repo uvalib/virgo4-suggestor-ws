@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -173,7 +174,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		}
 
 		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
-		resp, err := p.BedrockRuntime.Converse(context.TODO(), input)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		resp, err := p.BedrockRuntime.Converse(ctx, input)
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("converse error: %w", err)
 		}
