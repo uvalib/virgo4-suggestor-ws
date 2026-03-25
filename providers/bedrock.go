@@ -108,7 +108,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. EXTREMELY IMPORTANT: Our Author Knowledge Base contains thousands of detailed biographies and works - if the user query is broad or ambiguous (like 'lock'), always use the `retrieve_authors_from_kb` tool to find the most relevant authors, their notable works, and to distinguish between similar people."
+	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. IMPORTANT: You have access to the UVA Author Knowledge Base searching thousands of biographies and works. For EVERY query, you MUST first use the `retrieve_authors_from_kb` tool to verify your suggestions against our official catalog and find related authors before providing your final JSON response."
 
 	userPrompt := ""
 	if customPrompt == "" {
