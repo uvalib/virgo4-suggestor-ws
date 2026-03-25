@@ -108,7 +108,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	systemPrompt := "You are a helpful academic librarian assistant that outputs search suggestions in JSON format."
+	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. EXTREMELY IMPORTANT: Our Author Knowledge Base contains thousands of detailed biographies and works - if the user query is broad or ambiguous (like 'lock'), always use the `retrieve_authors_from_kb` tool to find the most relevant authors, their notable works, and to distinguish between similar people."
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -155,6 +155,8 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		},
 	}
 
+	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
+	log.Printf("[AGENT] Start session: query='%s'", query)
 	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
 	log.Printf("[AGENT] User Prompt: %s", userPrompt)
 
@@ -271,6 +273,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
 			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
 		}
+		log.Printf("[AGENT] Final result: mean='%s', count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
 		return &aiResponse, nil
 	}
 
