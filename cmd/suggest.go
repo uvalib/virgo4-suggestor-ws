@@ -185,18 +185,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			existingSuggestions = append(existingSuggestions, sugg.Value)
 		}
 	}
-	// 2. Optional Semantic Retrieval (Bedrock Knowledge Base)
+	// 2. We skip manual KB retrieval here to save latency.
+	// The AI will autonomously use the KB tool if Solr results are insufficient.
 	kbSuggestions := []string{}
-	if s.svc.AIProvider != nil {
-		var err error
-		kbSuggestions, err = s.svc.AIProvider.Retrieve(s.parsedQuery)
-		if err != nil {
-			log.Printf("Knowledge Base retrieval failed: %s", err.Error())
-		}
-		if len(kbSuggestions) > 0 {
-			log.Printf("[KB] Found authors: %v", kbSuggestions)
-		}
-	}
 
 	// 3. Combine and Re-rank based on resource counts
 	combinedAuthors := []string{}
