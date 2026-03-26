@@ -172,12 +172,25 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 	// Reasoning Loop
 	for attempt := 0; attempt < 5; attempt++ {
+		// Role Sequence & Content Count Logging
+		roleSeq := ""
+		var validMessages []sdktypes.Message
+		for i, m := range messages {
+			if len(m.Content) > 0 {
+				roleSeq += fmt.Sprintf("[%v(%d)] ", m.Role, len(m.Content))
+				validMessages = append(validMessages, m)
+			} else {
+				log.Printf("[AGENT] Warning: Skipping empty message at index %d (Role: %v)", i, m.Role)
+			}
+		}
+		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
+
 		input := &bedrockruntime.ConverseInput{
 			ModelId: aws.String(p.Model),
 			System: []sdktypes.SystemContentBlock{
 				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 			},
-			Messages: messages,
+			Messages: validMessages,
 			ToolConfig: &sdktypes.ToolConfiguration{
 				Tools: []sdktypes.Tool{kbTool},
 			},
@@ -187,19 +200,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAny{
 				Value: sdktypes.AnyToolChoice{},
 			}
-		} else {
-			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAuto{
-				Value: sdktypes.AutoToolChoice{},
-			}
-		}
-
-		// Role Sequence Logging
-		roleSeq := ""
-		for _, m := range messages {
-			roleSeq += fmt.Sprintf("[%v] ", m.Role)
-		}
-		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
-
+		} 
+		// For subsequent turns, we omit ToolChoice to let the model decide or end naturally
+		
 		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
