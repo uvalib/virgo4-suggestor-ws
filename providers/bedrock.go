@@ -108,7 +108,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. IMPORTANT: You have access to the UVA Author Knowledge Base searching thousands of biographies and works. For EVERY query, you MUST first use the `retrieve_authors_from_kb` tool to verify your suggestions against our official catalog and find related authors before providing your final JSON response."
+	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. IMPORTANT: You have access to the UVA Author Knowledge Base. For EVERY query, you MUST first use the `retrieve_authors_from_kb` tool (Example: `{\"query\": \"Locke\", \"limit\": 10}`) to verify your suggestions against our official catalog before responding."
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -236,7 +236,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 					}
 					
 					kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
-					if err != nil {
+					if toolInput.Query == "" {
+						toolOutput = "Error: 'query' parameter is required for retrieve_authors_from_kb. Please provide an author name or book title."
+						log.Printf("[AGENT] KB Tool Warning: Model sent empty query")
+					} else if err != nil {
 						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
 						log.Printf("[AGENT] KB Tool Error: %v", err)
 					} else {
@@ -282,9 +285,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 		var aiResponse AIResponse
 		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+			log.Printf("[AGENT] Final Output (Raw Text): %s", finalContent)
 			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
 		}
-		log.Printf("[AGENT] Final Suggestions (%d): %v", len(aiResponse.Suggestions), aiResponse.Suggestions)
+		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
 		return &aiResponse, nil
 	}
 
