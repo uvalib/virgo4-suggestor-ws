@@ -320,18 +320,34 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 // safeAppendMessage ensures that messages alternate roles correctly and removes empty content
 func (p *BedrockProvider) safeAppendMessage(history []sdktypes.Message, msg sdktypes.Message) []sdktypes.Message {
-	// 1. Sanitize content
+	// 1. Sanitize content and ensure non-empty
 	var validContent []sdktypes.ContentBlock
+	hasText := false
+	hasToolUse := false
+	
 	for _, b := range msg.Content {
-		// Filter out empty text blocks
+		// Detect block types
 		if tb, ok := b.(*sdktypes.ContentBlockMemberText); ok {
-			if strings.TrimSpace(tb.Value) == "" {
-				continue
+			if strings.TrimSpace(tb.Value) != "" {
+				hasText = true
+				validContent = append(validContent, b)
 			}
+		} else if _, ok := b.(*sdktypes.ContentBlockMemberToolUse); ok {
+			hasToolUse = true
+			validContent = append(validContent, b)
+		} else {
+			validContent = append(validContent, b)
 		}
-		validContent = append(validContent, b)
 	}
 	
+	// Assistant messages with ONLY tool calls sometimes cause role errors in Google models
+	// if they don't have a text block. We add a subtle placeholder if needed.
+	if msg.Role == sdktypes.ConversationRoleAssistant && hasToolUse && !hasText {
+		validContent = append([]sdktypes.ContentBlock{
+			&sdktypes.ContentBlockMemberText{Value: "Analyzing search requirements..."},
+		}, validContent...)
+	}
+
 	if len(validContent) == 0 {
 		log.Printf("[AGENT] Warning: Skipping message with no valid content (Role: %v)", msg.Role)
 		return history
