@@ -213,7 +213,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		log.Printf("[AGENT] Received Converse response. Stop reason: %v", resp.StopReason)
 
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-		messages = append(messages, output)
+		messages = p.safeAppendMessage(messages, output)
 
 		// Check for Tool Use
 		foundToolUse := false
@@ -281,7 +281,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		}
 
 		if foundToolUse {
-			messages = append(messages, sdktypes.Message{
+			messages = p.safeAppendMessage(messages, sdktypes.Message{
 				Role:    sdktypes.ConversationRoleUser,
 				Content: toolResults,
 			})
@@ -314,6 +314,40 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	}
 
 	return nil, fmt.Errorf("reached maximum tool use iterations")
+}
+
+// safeAppendMessage ensures that messages alternate roles correctly and removes empty content
+func (p *BedrockProvider) safeAppendMessage(history []sdktypes.Message, msg sdktypes.Message) []sdktypes.Message {
+	// 1. Sanitize content
+	var validContent []sdktypes.ContentBlock
+	for _, b := range msg.Content {
+		// Filter out empty text blocks
+		if tb, ok := b.(*sdktypes.ContentBlockMemberText); ok {
+			if strings.TrimSpace(tb.Value) == "" {
+				continue
+			}
+		}
+		validContent = append(validContent, b)
+	}
+	
+	if len(validContent) == 0 {
+		log.Printf("[AGENT] Warning: Skipping message with no valid content (Role: %v)", msg.Role)
+		return history
+	}
+	msg.Content = validContent
+
+	// 2. Enforce alternation
+	if len(history) > 0 {
+		lastMsg := history[len(history)-1]
+		if lastMsg.Role == msg.Role {
+			log.Printf("[AGENT] Safety: Merging consecutive %v messages to maintain alternation", msg.Role)
+			lastMsg.Content = append(lastMsg.Content, msg.Content...)
+			history[len(history)-1] = lastMsg
+			return history
+		}
+	}
+	
+	return append(history, msg)
 }
 
 // UnmarshalSmithyDocument is a helper to convert a smithy document.Interface to a Go struct
