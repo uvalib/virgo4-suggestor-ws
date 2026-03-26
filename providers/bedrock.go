@@ -193,6 +193,13 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			}
 		}
 
+		// Role Sequence Logging
+		roleSeq := ""
+		for _, m := range messages {
+			roleSeq += fmt.Sprintf("[%v] ", m.Role)
+		}
+		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
+
 		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
@@ -312,17 +319,26 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 		return nil
 	}
 	
-	// Reflect to see what we have
-	typ := reflect.TypeOf(v)
-	log.Printf("[AGENT] Reflecting on %T: %d methods", v, typ.NumMethod())
-	for i := 0; i < typ.NumMethod(); i++ {
-		log.Printf("[AGENT] Method %d: %s", i, typ.Method(i).Name)
+	val := reflect.ValueOf(v)
+	// Try the method we found in reflection
+	method := val.MethodByName("UnmarshalSmithyDocument")
+	if method.IsValid() {
+		results := method.Call([]reflect.Value{reflect.ValueOf(target)})
+		if len(results) > 0 && !results[0].IsNil() {
+			return results[0].Interface().(error)
+		}
+		return nil
 	}
 
-	// Try common unmarshal patterns
-	if dm, ok := v.(interface{ Unmarshal(interface{}) error }); ok {
-		return dm.Unmarshal(target)
+	// Fallback to the generic Unmarshal method if it exists
+	genericMethod := val.MethodByName("Unmarshal")
+	if genericMethod.IsValid() {
+		results := genericMethod.Call([]reflect.Value{reflect.ValueOf(target)})
+		if len(results) > 0 && !results[0].IsNil() {
+			return results[0].Interface().(error)
+		}
+		return nil
 	}
 
-	return fmt.Errorf("unsupported document type: %T", v)
+	return fmt.Errorf("no unmarshal method found on %T", v)
 }
