@@ -179,6 +179,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			Messages: messages,
 			ToolConfig: &sdktypes.ToolConfiguration{
 				Tools: []sdktypes.Tool{kbTool},
+				ToolChoice: &sdktypes.ToolChoiceMemberAny{
+					Value: sdktypes.AnyToolChoice{},
+				},
 			},
 		}
 
