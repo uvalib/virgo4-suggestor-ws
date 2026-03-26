@@ -158,14 +158,13 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
 	log.Printf("[AGENT] Start session: query='%s'", query)
-	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
-	log.Printf("[AGENT] User Prompt: %s", userPrompt)
+	log.Printf("[AGENT] Combined System/User Prompt: %s", systemPrompt+"\n\n"+userPrompt)
 
 	messages := []sdktypes.Message{
 		{
 			Role: sdktypes.ConversationRoleUser,
 			Content: []sdktypes.ContentBlock{
-				&sdktypes.ContentBlockMemberText{Value: userPrompt},
+				&sdktypes.ContentBlockMemberText{Value: systemPrompt + "\n\n" + userPrompt},
 			},
 		},
 	}
@@ -185,9 +184,8 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 		input := &bedrockruntime.ConverseInput{
 			ModelId: aws.String(p.Model),
-			System: []sdktypes.SystemContentBlock{
-				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
-			},
+			// System prompt is now merged into the first User message (index 0)
+			// to avoid role-alternation bugs with specific providers.
 			Messages: validMessages,
 			ToolConfig: &sdktypes.ToolConfiguration{
 				Tools: []sdktypes.Tool{kbTool},
@@ -253,11 +251,15 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 							toolInput.Limit = 20
 						}
 						
-						kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
-						if toolInput.Query == "" {
-							toolOutput = "Error: 'query' parameter is required for retrieve_authors_from_kb. Please provide an author name or book title."
-							log.Printf("[AGENT] KB Tool Warning: Model sent empty query")
-						} else if err != nil {
+						// Intelligent Fallback: if model sends empty query, use the original user query
+						searchQuery := toolInput.Query
+						if strings.TrimSpace(searchQuery) == "" {
+							log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
+							searchQuery = query
+						}
+
+						kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
+						if err != nil {
 							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
 							log.Printf("[AGENT] KB Tool Error: %v", err)
 						} else {
