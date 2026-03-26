@@ -179,10 +179,17 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			Messages: messages,
 			ToolConfig: &sdktypes.ToolConfiguration{
 				Tools: []sdktypes.Tool{kbTool},
-				ToolChoice: &sdktypes.ToolChoiceMemberAny{
-					Value: sdktypes.AnyToolChoice{},
-				},
 			},
+		}
+		// Force tool use only on the first turn to ensure verification
+		if attempt == 0 {
+			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAny{
+				Value: sdktypes.AnyToolChoice{},
+			}
+		} else {
+			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAuto{
+				Value: sdktypes.AutoToolChoice{},
+			}
 		}
 
 		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
@@ -231,9 +238,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 					kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
 					if err != nil {
 						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
+						log.Printf("[AGENT] KB Tool Error: %v", err)
 					} else {
 						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-						log.Printf("[AGENT] KB Tool Result: found %d records", len(kbResults))
+						log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
 					}
 				}
 
@@ -276,7 +284,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
 			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
 		}
-		log.Printf("[AGENT] Final result: mean='%s', count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
+		log.Printf("[AGENT] Final Suggestions (%d): %v", len(aiResponse.Suggestions), aiResponse.Suggestions)
 		return &aiResponse, nil
 	}
 
