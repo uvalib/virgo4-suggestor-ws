@@ -216,12 +216,19 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
 				foundToolUse = true
 				
+				// Diagnostic logging
+				log.Printf("[AGENT] KB Tool Raw Input Type: %T", toolUse.Value.Input)
+				log.Printf("[AGENT] KB Tool Raw Input Value: %+v", toolUse.Value.Input)
+				
 				// Use UnmarshalSmithyDocument instead of json.Marshal for document.Interface
 				var toolInput struct {
 					Query string `json:"query"`
 					Limit int    `json:"limit"`
 				}
-				p.UnmarshalSmithyDocument(toolUse.Value.Input, &toolInput)
+				err := p.UnmarshalSmithyDocument(toolUse.Value.Input, &toolInput)
+				if err != nil {
+					log.Printf("[AGENT] KB Tool Unmarshal Error: %v", err)
+				}
 				
 				log.Printf("[AGENT] KB Tool Call: %s (query: '%s', limit: %d)", *toolUse.Value.Name, toolInput.Query, toolInput.Limit)
 				
