@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -310,9 +311,18 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 	if v == nil {
 		return nil
 	}
-	// Use type assertion to check for Unmarshal method
+	
+	// Reflect to see what we have
+	typ := reflect.TypeOf(v)
+	log.Printf("[AGENT] Reflecting on %T: %d methods", v, typ.NumMethod())
+	for i := 0; i < typ.NumMethod(); i++ {
+		log.Printf("[AGENT] Method %d: %s", i, typ.Method(i).Name)
+	}
+
+	// Try common unmarshal patterns
 	if dm, ok := v.(interface{ Unmarshal(interface{}) error }); ok {
 		return dm.Unmarshal(target)
 	}
+
 	return fmt.Errorf("unsupported document type: %T", v)
 }
