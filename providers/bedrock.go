@@ -210,30 +210,18 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
 		messages = p.safeAppendMessage(messages, output)
 
-		// Process Tool Use
+		// Process Tool Use - Limit to EXACTLY ONE call for maximum stability with picky models
 		foundToolUse := false
 		var toolResults []sdktypes.ContentBlock
-		resultsCache := make(map[string]string)
 		
-		toolCount := 0
 		for _, block := range output.Content {
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
-				toolCount++
-				// Limit number of tool calls to prevent session instability
-				if toolCount > 5 {
-					log.Printf("[AGENT] Warning: Limiting tool calls to 5 (skipped extra call for %s)", *toolUse.Value.Name)
-					toolResults = append(toolResults, &sdktypes.ContentBlockMemberToolResult{
-						Value: sdktypes.ToolResultBlock{
-							ToolUseId: toolUse.Value.ToolUseId,
-							Content: []sdktypes.ToolResultContentBlock{
-								&sdktypes.ToolResultContentBlockMemberText{Value: "Error: Too many tool calls in one turn. Please try fewer searches."},
-							},
-						},
-					})
+				if foundToolUse {
+					log.Printf("[AGENT] Warning: Model sent multiple tool calls. Skipping extra call for %s to ensure role stability", *toolUse.Value.Name)
 					continue
 				}
-
 				foundToolUse = true
+
 				var toolInput struct {
 					Query string `json:"query"`
 					Limit int    `json:"limit"`
@@ -247,29 +235,22 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 				
 				var toolOutput string
 				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
-					cacheKey := fmt.Sprintf("%s:%d", toolInput.Query, toolInput.Limit)
-					if cached, ok := resultsCache[cacheKey]; ok {
-						toolOutput = cached
-						log.Printf("[AGENT] KB Tool Cache Hit for '%s'", toolInput.Query)
-					} else {
-						if toolInput.Limit <= 0 {
-							toolInput.Limit = 20
-						}
-						searchQuery := toolInput.Query
-						if strings.TrimSpace(searchQuery) == "" {
-							log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
-							searchQuery = query
-						}
+					if toolInput.Limit <= 0 {
+						toolInput.Limit = 20
+					}
+					searchQuery := toolInput.Query
+					if strings.TrimSpace(searchQuery) == "" {
+						log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
+						searchQuery = query
+					}
 
-						kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
-						if err != nil {
-							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
-							log.Printf("[AGENT] KB Tool Error: %v", err)
-						} else {
-							toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-							log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
-						}
-						resultsCache[cacheKey] = toolOutput
+					kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
+					if err != nil {
+						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
+						log.Printf("[AGENT] KB Tool Error: %v", err)
+					} else {
+						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
+						log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
 					}
 				}
 
@@ -324,36 +305,31 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 func (p *BedrockProvider) safeAppendMessage(history []sdktypes.Message, msg sdktypes.Message) []sdktypes.Message {
 	// 1. Sanitize content
 	var validContent []sdktypes.ContentBlock
+	hasText := false
 	hasToolUse := false
 	
 	for _, b := range msg.Content {
-		if _, ok := b.(*sdktypes.ContentBlockMemberToolUse); ok {
-			hasToolUse = true
-		}
-	}
-
-	for _, b := range msg.Content {
-		// Detect block types
 		if tb, ok := b.(*sdktypes.ContentBlockMemberText); ok {
-			// Skip empty text
-			if strings.TrimSpace(tb.Value) == "" {
-				continue
-			}
-			// CRITICAL: If an Assistant message has tool calls, some model providers (like Google)
-			// require that it contains NO text blocks to maintain role alternation stability.
-			if msg.Role == sdktypes.ConversationRoleAssistant && hasToolUse {
-				log.Printf("[AGENT] Safety: Stripping reasoning text from tool-use response to satisfy provider limits")
+			if strings.TrimSpace(tb.Value) != "" {
+				hasText = true
 				log.Printf("[AGENT] Model Reasoning: %s", tb.Value)
-				continue
+				validContent = append(validContent, b)
 			}
-			
-			log.Printf("[AGENT] Model Reasoning: %s", tb.Value)
+		} else if _, ok := b.(*sdktypes.ContentBlockMemberToolUse); ok {
+			hasToolUse = true
 			validContent = append(validContent, b)
 		} else {
 			validContent = append(validContent, b)
 		}
 	}
 	
+	// Assistant messages with tool calls MUST also have text for some providers
+	if msg.Role == sdktypes.ConversationRoleAssistant && hasToolUse && !hasText {
+		validContent = append([]sdktypes.ContentBlock{
+			&sdktypes.ContentBlockMemberText{Value: "Searching Knowledge Base..."},
+		}, validContent...)
+	}
+
 	if len(validContent) == 0 {
 		log.Printf("[AGENT] Warning: Skipping message with no valid content (Role: %v)", msg.Role)
 		return history
