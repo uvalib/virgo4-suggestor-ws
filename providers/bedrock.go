@@ -215,17 +215,20 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
 				foundToolUse = true
-				inputBytes, _ := json.Marshal(toolUse.Value.Input)
-				log.Printf("[AGENT] KB Tool Call: %s input: %s", *toolUse.Value.Name, string(inputBytes))
+				
+				// Use UnmarshalSmithyDocument instead of json.Marshal for document.Interface
+				var toolInput struct {
+					Query string `json:"query"`
+					Limit int    `json:"limit"`
+				}
+				p.UnmarshalSmithyDocument(toolUse.Value.Input, &toolInput)
+				
+				log.Printf("[AGENT] KB Tool Call: %s (query: '%s', limit: %d)", *toolUse.Value.Name, toolInput.Query, toolInput.Limit)
 				
 				var toolOutput string
+				// Validation already handled by toolInput.Query check
 				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
-					var toolInput struct {
-						Query string `json:"query"`
-						Limit int    `json:"limit"`
-					}
-					// inputBytes already marshaled above
-					json.Unmarshal(inputBytes, &toolInput)
+					// No need to re-marshal or re-unmarshal, already in toolInput
 					
 					// Default and clamp limit
 					if toolInput.Limit <= 0 {
@@ -293,4 +296,16 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 	}
 
 	return nil, fmt.Errorf("reached maximum tool use iterations")
+}
+
+// UnmarshalSmithyDocument is a helper to convert a smithy document.Interface to a Go struct
+func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interface{}) error {
+	if v == nil {
+		return nil
+	}
+	// Use type assertion to check for Unmarshal method
+	if dm, ok := v.(interface{ Unmarshal(interface{}) error }); ok {
+		return dm.Unmarshal(target)
+	}
+	return fmt.Errorf("unsupported document type: %T", v)
 }
