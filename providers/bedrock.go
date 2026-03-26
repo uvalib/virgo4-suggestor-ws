@@ -158,13 +158,14 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
 	log.Printf("[AGENT] Start session: query='%s'", query)
-	log.Printf("[AGENT] Combined System/User Prompt: %s", systemPrompt+"\n\n"+userPrompt)
+	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
+	log.Printf("[AGENT] User Prompt: %s", userPrompt)
 
 	messages := []sdktypes.Message{
 		{
 			Role: sdktypes.ConversationRoleUser,
 			Content: []sdktypes.ContentBlock{
-				&sdktypes.ContentBlockMemberText{Value: systemPrompt + "\n\n" + userPrompt},
+				&sdktypes.ContentBlockMemberText{Value: userPrompt},
 			},
 		},
 	}
@@ -184,8 +185,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 		input := &bedrockruntime.ConverseInput{
 			ModelId: aws.String(p.Model),
-			// System prompt is now merged into the first User message (index 0)
-			// to avoid role-alternation bugs with specific providers.
+			System: []sdktypes.SystemContentBlock{
+				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
+			},
 			Messages: validMessages,
 			ToolConfig: &sdktypes.ToolConfiguration{
 				Tools: []sdktypes.Tool{kbTool},
@@ -210,16 +212,13 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
 		messages = p.safeAppendMessage(messages, output)
 
-		// Process Tool Use - Limit to EXACTLY ONE call for maximum stability with picky models
+		// Process Tool Use
 		foundToolUse := false
 		var toolResults []sdktypes.ContentBlock
+		resultsCache := make(map[string]string)
 		
 		for _, block := range output.Content {
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
-				if foundToolUse {
-					log.Printf("[AGENT] Warning: Model sent multiple tool calls. Skipping extra call for %s to ensure role stability", *toolUse.Value.Name)
-					continue
-				}
 				foundToolUse = true
 
 				var toolInput struct {
@@ -235,22 +234,29 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 				
 				var toolOutput string
 				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
-					if toolInput.Limit <= 0 {
-						toolInput.Limit = 20
-					}
-					searchQuery := toolInput.Query
-					if strings.TrimSpace(searchQuery) == "" {
-						log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
-						searchQuery = query
-					}
-
-					kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
-					if err != nil {
-						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
-						log.Printf("[AGENT] KB Tool Error: %v", err)
+					cacheKey := fmt.Sprintf("%s:%d", toolInput.Query, toolInput.Limit)
+					if cached, ok := resultsCache[cacheKey]; ok {
+						toolOutput = cached
+						log.Printf("[AGENT] KB Tool Cache Hit for '%s'", toolInput.Query)
 					} else {
-						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-						log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
+						if toolInput.Limit <= 0 {
+							toolInput.Limit = 20
+						}
+						searchQuery := toolInput.Query
+						if strings.TrimSpace(searchQuery) == "" {
+							log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
+							searchQuery = query
+						}
+
+						kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
+						if err != nil {
+							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
+							log.Printf("[AGENT] KB Tool Error: %v", err)
+						} else {
+							toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
+							log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
+						}
+						resultsCache[cacheKey] = toolOutput
 					}
 				}
 
@@ -303,12 +309,13 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 // safeAppendMessage ensures that messages alternate roles correctly and removes empty content
 func (p *BedrockProvider) safeAppendMessage(history []sdktypes.Message, msg sdktypes.Message) []sdktypes.Message {
-	// 1. Sanitize content
+	// 1. Sanitize content and ensure non-empty
 	var validContent []sdktypes.ContentBlock
 	hasText := false
 	hasToolUse := false
 	
 	for _, b := range msg.Content {
+		// Detect block types
 		if tb, ok := b.(*sdktypes.ContentBlockMemberText); ok {
 			if strings.TrimSpace(tb.Value) != "" {
 				hasText = true
