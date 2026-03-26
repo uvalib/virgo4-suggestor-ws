@@ -175,12 +175,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		// Role Sequence & Content Count Logging
 		roleSeq := ""
 		var validMessages []sdktypes.Message
-		for i, m := range messages {
+		for _, m := range messages {
 			if len(m.Content) > 0 {
 				roleSeq += fmt.Sprintf("[%v(%d)] ", m.Role, len(m.Content))
 				validMessages = append(validMessages, m)
-			} else {
-				log.Printf("[AGENT] Warning: Skipping empty message at index %d (Role: %v)", i, m.Role)
 			}
 		}
 		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
@@ -195,11 +193,14 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 				Tools: []sdktypes.Tool{kbTool},
 			},
 		}
-		// We remove ToolChoice: Any to allow the model to operate naturally.
-		// Instructions in the system prompt should still encourage tool use.
-		// For subsequent turns, we omit ToolChoice to let the model decide or end naturally
-		
-		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
+
+		// MANDATORY: Force tool use only on the first turn to ensure verification.
+		// We have safeAppendMessage with placeholder text to prevent Role Alternation errors.
+		if attempt == 0 {
+			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAny{
+				Value: sdktypes.AnyToolChoice{},
+			}
+		} 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
 		cancel()
@@ -225,10 +226,6 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 
 			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
 				foundToolUse = true
-				
-				// Diagnostic logging
-				log.Printf("[AGENT] KB Tool Raw Input Type: %T", toolUse.Value.Input)
-				log.Printf("[AGENT] KB Tool Raw Input Value: %+v", toolUse.Value.Input)
 				
 				// Use UnmarshalSmithyDocument instead of json.Marshal for document.Interface
 				var toolInput struct {
