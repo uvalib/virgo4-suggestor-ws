@@ -195,12 +195,8 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 				Tools: []sdktypes.Tool{kbTool},
 			},
 		}
-		// Force tool use only on the first turn to ensure verification
-		if attempt == 0 {
-			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAny{
-				Value: sdktypes.AnyToolChoice{},
-			}
-		} 
+		// We remove ToolChoice: Any to allow the model to operate naturally.
+		// Instructions in the system prompt should still encourage tool use.
 		// For subsequent turns, we omit ToolChoice to let the model decide or end naturally
 		
 		log.Printf("[AGENT] Starting Converse API call (attempt %d)...", attempt+1)
@@ -218,6 +214,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		// Check for Tool Use
 		foundToolUse := false
 		var toolResults []sdktypes.ContentBlock
+		
+		// Cache results to deduplicate identical tool calls in the same turn
+		resultsCache := make(map[string]string)
 		
 		for _, block := range output.Content {
 			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
@@ -246,26 +245,29 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 				var toolOutput string
 				// Validation already handled by toolInput.Query check
 				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
-					// No need to re-marshal or re-unmarshal, already in toolInput
-					
-					// Default and clamp limit
-					if toolInput.Limit <= 0 {
-						toolInput.Limit = 20
-					}
-					if toolInput.Limit > 50 {
-						toolInput.Limit = 50
-					}
-					
-					kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
-					if toolInput.Query == "" {
-						toolOutput = "Error: 'query' parameter is required for retrieve_authors_from_kb. Please provide an author name or book title."
-						log.Printf("[AGENT] KB Tool Warning: Model sent empty query")
-					} else if err != nil {
-						toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
-						log.Printf("[AGENT] KB Tool Error: %v", err)
+					// Use cache to avoid redundant network calls
+					cacheKey := fmt.Sprintf("%s:%d", toolInput.Query, toolInput.Limit)
+					if cached, ok := resultsCache[cacheKey]; ok {
+						toolOutput = cached
+						log.Printf("[AGENT] KB Tool Cache Hit for '%s'", toolInput.Query)
 					} else {
-						toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-						log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
+						// Default and clamp limit
+						if toolInput.Limit <= 0 {
+							toolInput.Limit = 20
+						}
+						
+						kbResults, err := p.Retrieve(toolInput.Query, toolInput.Limit)
+						if toolInput.Query == "" {
+							toolOutput = "Error: 'query' parameter is required for retrieve_authors_from_kb. Please provide an author name or book title."
+							log.Printf("[AGENT] KB Tool Warning: Model sent empty query")
+						} else if err != nil {
+							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
+							log.Printf("[AGENT] KB Tool Error: %v", err)
+						} else {
+							toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
+							log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
+						}
+						resultsCache[cacheKey] = toolOutput
 					}
 				}
 
