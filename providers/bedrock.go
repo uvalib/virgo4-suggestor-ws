@@ -185,6 +185,14 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		}
 		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
 
+		// Force tool use only on the first turn to ensure verification.
+		var toolChoice sdktypes.ToolChoice
+		if attempt == 0 {
+			toolChoice = &sdktypes.ToolChoiceMemberAny{}
+		} else {
+			toolChoice = &sdktypes.ToolChoiceMemberAuto{}
+		}
+
 		input := &bedrockruntime.ConverseInput{
 			ModelId: aws.String(p.Model),
 			System: []sdktypes.SystemContentBlock{
@@ -192,17 +200,10 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 			},
 			Messages: validMessages,
 			ToolConfig: &sdktypes.ToolConfiguration{
-				Tools: []sdktypes.Tool{kbTool},
+				Tools:      []sdktypes.Tool{kbTool},
+				ToolChoice: toolChoice,
 			},
 		}
-
-		// MANDATORY: Force tool use only on the first turn to ensure verification.
-		// We have safeAppendMessage with placeholder text to prevent Role Alternation errors.
-		if attempt == 0 {
-			input.ToolConfig.ToolChoice = &sdktypes.ToolChoiceMemberAny{
-				Value: sdktypes.AnyToolChoice{},
-			}
-		} 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
 		cancel()
@@ -274,9 +275,16 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 		}
 
 		if foundToolUse {
+			// Some models (like Nvidia) incorrectly throw "streaming mode" errors 
+			// if the ToolResult turn doesn't contain at least one text block.
+			userMsgBlocks := []sdktypes.ContentBlock{
+				&sdktypes.ContentBlockMemberText{Value: "Processing tool results..."},
+			}
+			userMsgBlocks = append(userMsgBlocks, toolResults...)
+
 			messages = p.safeAppendMessage(messages, sdktypes.Message{
 				Role:    sdktypes.ConversationRoleUser,
-				Content: toolResults,
+				Content: userMsgBlocks,
 			})
 			continue
 		}
@@ -313,30 +321,32 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 func (p *BedrockProvider) safeAppendMessage(history []sdktypes.Message, msg sdktypes.Message) []sdktypes.Message {
 	// 1. Sanitize content and ensure non-empty
 	var validContent []sdktypes.ContentBlock
-	hasText := false
 	hasToolUse := false
 	
+	for _, b := range msg.Content {
+		if _, ok := b.(*sdktypes.ContentBlockMemberToolUse); ok {
+			hasToolUse = true
+		}
+	}
+
 	for _, b := range msg.Content {
 		// Detect block types
 		if tb, ok := b.(*sdktypes.ContentBlockMemberText); ok {
 			if strings.TrimSpace(tb.Value) != "" {
-				hasText = true
+				// CRITICAL: Many models on Bedrock (Gemma, Nvidia) incorrectly fail 
+				// with role alternation or "streaming mode" errors if an Assistant turn 
+				// contains both reasoning text AND tool calls.
+				if msg.Role == sdktypes.ConversationRoleAssistant && hasToolUse {
+					log.Printf("[AGENT] Safety: Stripping reasoning text from tool-use turn for stability")
+					log.Printf("[AGENT] Model Reasoning: %s", tb.Value)
+					continue
+				}
 				log.Printf("[AGENT] Model Reasoning: %s", tb.Value)
 				validContent = append(validContent, b)
 			}
-		} else if _, ok := b.(*sdktypes.ContentBlockMemberToolUse); ok {
-			hasToolUse = true
-			validContent = append(validContent, b)
 		} else {
 			validContent = append(validContent, b)
 		}
-	}
-	
-	// Assistant messages with tool calls MUST also have text for some providers
-	if msg.Role == sdktypes.ConversationRoleAssistant && hasToolUse && !hasText {
-		validContent = append([]sdktypes.ContentBlock{
-			&sdktypes.ContentBlockMemberText{Value: "Searching Knowledge Base..."},
-		}, validContent...)
 	}
 
 	if len(validContent) == 0 {
