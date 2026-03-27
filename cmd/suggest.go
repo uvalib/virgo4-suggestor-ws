@@ -175,8 +175,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	authorRes, err := s.HandleAuthorSuggestionRequest()
 	if err != nil {
 		log.Printf("WARNING: Solr author suggestion failed: %v. Proceeding with KB only.", err)
-		// If an error occurs, authorRes will be nil or an empty response,
-		// so existingSuggestions will correctly be initialized as empty below.
+		// If parsing failed, use raw query for AI context
+		if s.parsedQuery == "" {
+			s.parsedQuery = s.req.Query
+		}
 	}
 
 	existingSuggestions := []string{}

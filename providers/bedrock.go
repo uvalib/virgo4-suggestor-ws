@@ -192,12 +192,11 @@ Research Strategy:
 		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
 
 		// Force tool use only on the first turn to ensure verification.
-		var toolConfig *sdktypes.ToolConfiguration
+		var toolChoice sdktypes.ToolChoice
 		if attempt == 0 {
-			toolConfig = &sdktypes.ToolConfiguration{
-				Tools:      []sdktypes.Tool{kbTool},
-				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
-			}
+			toolChoice = &sdktypes.ToolChoiceMemberAny{}
+		} else {
+			toolChoice = &sdktypes.ToolChoiceMemberAuto{}
 		}
 
 		input := &bedrockruntime.ConverseInput{
@@ -205,8 +204,11 @@ Research Strategy:
 			System: []sdktypes.SystemContentBlock{
 				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 			},
-			Messages:   validMessages,
-			ToolConfig: toolConfig, // Only send tools on turn 0
+			Messages: validMessages,
+			ToolConfig: &sdktypes.ToolConfiguration{
+				Tools:      []sdktypes.Tool{kbTool},
+				ToolChoice: toolChoice,
+			},
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
