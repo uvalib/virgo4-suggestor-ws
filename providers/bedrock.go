@@ -111,7 +111,13 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	systemPrompt := "You are a helpful academic librarian assistant. Provide search suggestions in JSON format. IMPORTANT: You have access to the UVA Author Knowledge Base. For EVERY query, you MUST first use the `retrieve_authors_from_kb` tool (Example: `{\"query\": \"Locke\", \"limit\": 10}`) to verify your suggestions against our official catalog before responding."
+	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions in JSON format. 
+IMPORTANT: You have access to the UVA Author Knowledge Base. You MUST verify every suggestion by searching the KB.
+Research Strategy:
+1. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
+2. For EVERY query, you MUST first use the 'retrieve_authors_from_kb' tool.
+3. If your first search returns noisy or irrelevant names, use the tool AGAIN with a more specific query (e.g. searching for specific names you suspect might be relevant).
+4. NEVER respond with names that are not in the Knowledge Base unless you are 100% sure they are relevant and correctly spelled.`
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -242,8 +248,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 						toolOutput = cached
 						log.Printf("[AGENT] KB Tool Cache Hit for '%s'", toolInput.Query)
 					} else {
-						if toolInput.Limit <= 0 {
-							toolInput.Limit = 20
+						actualLimit := toolInput.Limit
+						if actualLimit <= 0 {
+							actualLimit = 20
 						}
 						searchQuery := toolInput.Query
 						if strings.TrimSpace(searchQuery) == "" {
@@ -251,13 +258,13 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, exis
 							searchQuery = query
 						}
 
-						kbResults, err := p.Retrieve(searchQuery, toolInput.Limit)
+						kbResults, err := p.Retrieve(searchQuery, actualLimit)
 						if err != nil {
 							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
 							log.Printf("[AGENT] KB Tool Error: %v", err)
 						} else {
 							toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-							log.Printf("[AGENT] KB Results: [%s]", strings.Join(kbResults, ", "))
+							log.Printf("[AGENT] KB Results: [%s] (limit: %d)", strings.Join(kbResults, ", "), actualLimit)
 						}
 						resultsCache[cacheKey] = toolOutput
 					}
