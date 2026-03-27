@@ -117,9 +117,10 @@ Research Strategy:
 1. Use the 'retrieve_authors_from_kb' tool at least once per request to find verified authors.
 2. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
 3. If your first search returns noisy/irrelevant names or lacks definitive matches, use the tool AGAIN with a more specific query (e.g. searching for specific names you know are famous for this topic).
-4. Return a JSON object with 'didYouMean' (string) and 'suggestions' (array of objects).
-5. Each suggestion object MUST have: 'name' (the author name) and 'reason' (a short explanation of why they are relevant, citing their works if found).
-6. Return ONLY authors that you have verified are present in the Knowledge Base results.`
+4. Return a JSON object with 'didYouMean' (string) and 'suggestions' (array of objects). Use ONLY standard ASCII double-quotes (") for JSON and avoid any smart/curly quotes.
+5. Each suggestion object MUST have: 'name' (the author name) and 'reason' (a short explanation of why they are relevant).
+6. Return ONLY authors that you have verified are present in the Knowledge Base results.
+7. CRITICAL: Do NOT include literal newlines inside JSON string values.`
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -193,24 +194,22 @@ Research Strategy:
 		}
 		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
 
-		// Force tool use only on the first turn to ensure verification.
-		var toolChoice sdktypes.ToolChoice
-		if attempt == 0 {
-			toolChoice = &sdktypes.ToolChoiceMemberAny{}
-		} else {
-			toolChoice = &sdktypes.ToolChoiceMemberAuto{}
-		}
-
 		input := &bedrockruntime.ConverseInput{
 			ModelId: aws.String(p.Model),
 			System: []sdktypes.SystemContentBlock{
 				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 			},
 			Messages: validMessages,
-			ToolConfig: &sdktypes.ToolConfiguration{
+		}
+		
+		// Only provide ToolConfig on attempt 0. 
+		// If we find tool results, we'll inject them into the prompt and reset history 
+		// for turn 1 to avoid multi-turn validation bugs with Nemotron/Gemma.
+		if attempt == 0 {
+			input.ToolConfig = &sdktypes.ToolConfiguration{
 				Tools:      []sdktypes.Tool{kbTool},
-				ToolChoice: toolChoice,
-			},
+				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
@@ -284,17 +283,20 @@ Research Strategy:
 		}
 
 		if foundToolUse {
-			// Some models (like Nvidia) incorrectly throw "streaming mode" errors 
-			// if the ToolResult turn doesn't contain at least one text block.
-			userMsgBlocks := []sdktypes.ContentBlock{
-				&sdktypes.ContentBlockMemberText{Value: "Processing tool results..."},
+			log.Printf("[AGENT] Stability: Collapsing tool results into prompt and resetting history")
+			// We take the last tool result and append it to our context
+			// In a more complex agent we would handle multiple tool results, 
+			// but here we just need the verified authors.
+			contextUpdate := "\n\nCRITICAL KNOWLEDGE BASE RESEARCH RESULTS:\n" + toolResults[len(toolResults)-1].(*sdktypes.ContentBlockMemberToolResult).Value.Content[0].(*sdktypes.ToolResultContentBlockMemberText).Value
+			
+			messages = []sdktypes.Message{
+				{
+					Role: sdktypes.ConversationRoleUser,
+					Content: []sdktypes.ContentBlock{
+						&sdktypes.ContentBlockMemberText{Value: userPrompt + contextUpdate},
+					},
+				},
 			}
-			userMsgBlocks = append(userMsgBlocks, toolResults...)
-
-			messages = p.safeAppendMessage(messages, sdktypes.Message{
-				Role:    sdktypes.ConversationRoleUser,
-				Content: userMsgBlocks,
-			})
 			continue
 		}
 
@@ -306,13 +308,8 @@ Research Strategy:
 			}
 		}
 
-		// Parse JSON
-		finalContent = strings.TrimSpace(finalContent)
-		startIdx := strings.Index(finalContent, "{")
-		if startIdx > -1 {
-			endIdx := strings.LastIndex(finalContent, "}")
-			finalContent = finalContent[startIdx : endIdx+1]
-		}
+		// Sanitize JSON (Smart quotes, etc)
+		finalContent = p.sanitizeJSON(finalContent)
 
 		var aiResponse AIResponse
 		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
@@ -406,4 +403,22 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 	}
 
 	return fmt.Errorf("no unmarshal method found on %T", v)
+}
+
+// sanitizeJSON handles common AI output issues like smart quotes and literal newlines in strings
+func (p *BedrockProvider) sanitizeJSON(input string) string {
+	// 1. Extract JSON part from markdown or surrounding text
+	startIdx := strings.Index(input, "{")
+	if startIdx > -1 {
+		endIdx := strings.LastIndex(input, "}")
+		input = input[startIdx : endIdx+1]
+	}
+
+	// 2. Replace smart/curly quotes with standard ASCII equivalents
+	input = strings.ReplaceAll(input, "“", "\"")
+	input = strings.ReplaceAll(input, "”", "\"")
+	input = strings.ReplaceAll(input, "‘", "'")
+	input = strings.ReplaceAll(input, "’", "'")
+
+	return strings.TrimSpace(input)
 }
