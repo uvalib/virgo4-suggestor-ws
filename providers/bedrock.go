@@ -36,13 +36,15 @@ func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Clien
 		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
 	}
 
-	if model == "" {
-		return nil, fmt.Errorf("missing required model")
+	// Final stabilized model choice for deployment
+	bedrockModel := "nvidia.nemotron-nano-9b-v2"
+	if model != "" {
+		bedrockModel = model
 	}
 
 	return &BedrockProvider{
 		Region:          cfg.Region,
-		Model:           model,
+		Model:           bedrockModel,
 		KnowledgeBaseID: knowledgeBaseID,
 		Config:          cfg,
 		BedrockRuntime:  bedrockruntime.NewFromConfig(cfg),
