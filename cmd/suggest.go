@@ -25,8 +25,9 @@ type SuggestionContext struct {
 
 // Suggestion contains data for a single suggestion
 type Suggestion struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Type   string `json:"type"`
+	Value  string `json:"value"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // SuggestionRequest defines the format of a suggestion request
@@ -273,21 +274,31 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				valid bool
 			}
 			checkChan := make(chan resultCheck, len(aiRes.Suggestions))
-			for _, term := range aiRes.Suggestions {
+			for _, sugg := range aiRes.Suggestions {
 				go func(t string) {
 					valid := s.verifySuggestionResults(t)
 					log.Printf("[VERIFY] '%s' valid: %v", t, valid)
 					checkChan <- resultCheck{term: t, valid: valid}
-				}(term)
+				}(sugg.Name)
 			}
+			// Use a map for quick reason lookup by author name
+			reasonMap := make(map[string]string)
+			for _, s := range aiRes.Suggestions {
+				reasonMap[s.Name] = s.Reason
+			}
+
 			resultsMap := make(map[string]bool)
 			for i := 0; i < len(aiRes.Suggestions); i++ {
 				r := <-checkChan
 				resultsMap[r.term] = r.valid
 			}
-			for _, term := range aiRes.Suggestions {
-				if resultsMap[term] {
-					verifiedSuggestions = append(verifiedSuggestions, Suggestion{Type: "author", Value: term})
+			for _, s := range aiRes.Suggestions {
+				if resultsMap[s.Name] {
+					verifiedSuggestions = append(verifiedSuggestions, Suggestion{
+						Type:   "author",
+						Value:  s.Name,
+						Reason: reasonMap[s.Name],
+					})
 				}
 			}
 			res.Suggestions = verifiedSuggestions

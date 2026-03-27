@@ -117,7 +117,9 @@ Research Strategy:
 1. Use the 'retrieve_authors_from_kb' tool at least once per request to find verified authors.
 2. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
 3. If your first search returns noisy/irrelevant names or lacks definitive matches, use the tool AGAIN with a more specific query (e.g. searching for specific names you know are famous for this topic).
-4. Return ONLY authors that you have verified are present in the Knowledge Base results.`
+4. Return a JSON object with 'didYouMean' (string) and 'suggestions' (array of objects).
+5. Each suggestion object MUST have: 'name' (the author name) and 'reason' (a short explanation of why they are relevant, citing their works if found).
+6. Return ONLY authors that you have verified are present in the Knowledge Base results.`
 
 	userPrompt := ""
 	if customPrompt == "" {

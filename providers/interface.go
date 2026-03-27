@@ -3,7 +3,13 @@ package providers
 // AIResponse represents the structured response from the AI provider
 type AIResponse struct {
 	DidYouMean  string   `json:"didYouMean"`
-	Suggestions []string `json:"suggestions"`
+	Suggestions []AIResponseSuggestion `json:"suggestions"`
+}
+
+// AIResponseSuggestion contains an individual suggestion and its reason
+type AIResponseSuggestion struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // AIProvider defines the interface for different AI backends
