@@ -112,12 +112,12 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
 	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions in JSON format. 
-IMPORTANT: You have access to the UVA Author Knowledge Base. You MUST verify every suggestion by searching the KB.
+IMPORTANT: For every incoming USER query, you MUST use the 'retrieve_authors_from_kb' tool to research and verify authors in our official catalog.
 Research Strategy:
-1. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
-2. For EVERY query, you MUST first use the 'retrieve_authors_from_kb' tool.
-3. If your first search returns noisy or irrelevant names, use the tool AGAIN with a more specific query (e.g. searching for specific names you suspect might be relevant).
-4. NEVER respond with names that are not in the Knowledge Base unless you are 100% sure they are relevant and correctly spelled.`
+1. Use the 'retrieve_authors_from_kb' tool at least once per request to find verified authors.
+2. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
+3. If your first search returns noisy/irrelevant names or lacks definitive matches, use the tool AGAIN with a more specific query (e.g. searching for specific names you know are famous for this topic).
+4. Return ONLY authors that you have verified are present in the Knowledge Base results.`
 
 	userPrompt := ""
 	if customPrompt == "" {
