@@ -420,5 +420,10 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 	input = strings.ReplaceAll(input, "‘", "'")
 	input = strings.ReplaceAll(input, "’", "'")
 
+	// 3. Remove literal newlines/returns within the JSON block
+	// json.Unmarshal handles spaces between tokens, but literal 0x0A inside strings is an error.
+	input = strings.ReplaceAll(input, "\n", " ")
+	input = strings.ReplaceAll(input, "\r", " ")
+
 	return strings.TrimSpace(input)
 }
