@@ -164,6 +164,36 @@ Research Strategy:
 		},
 	}
 
+	resultTool := &sdktypes.ToolMemberToolSpec{
+		Value: sdktypes.ToolSpecification{
+			Name:        aws.String("return_suggestions"),
+			Description: aws.String("Submit the final list of verified author suggestions and spell corrections. This MUST be called to complete the request."),
+			InputSchema: &sdktypes.ToolInputSchemaMemberJson{
+				Value: document.NewLazyDocument(map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"didYouMean": map[string]interface{}{
+							"type":        "string",
+							"description": "Spell correction if the query was misspelled",
+						},
+						"suggestions": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"name":   map[string]interface{}{"type": "string"},
+									"reason": map[string]interface{}{"type": "string"},
+								},
+								"required": []string{"name", "reason"},
+							},
+						},
+					},
+					"required": []string{"suggestions"},
+				}),
+			},
+		},
+	}
+
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
 	log.Printf("[AGENT] Start session: query='%s'", query)
 	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
@@ -197,18 +227,6 @@ Research Strategy:
 				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 			},
 			Messages: validMessages,
-			Output: &sdktypes.OutputConfig{
-				TextFormat: &sdktypes.OutputFormat{
-					Type: sdktypes.OutputFormatTypeJson,
-					Structure: &sdktypes.OutputFormatStructureMemberJsonSchema{
-						Value: sdktypes.JsonSchema{
-							Name:        aws.String("author_suggestions"),
-							Description: aws.String("List of verified author suggestions and spell check"),
-							Schema:      p.getResponseSchema(),
-						},
-					},
-				},
-			},
 		}
 		
 		// Only provide ToolConfig on attempt 0. 
@@ -216,8 +234,18 @@ Research Strategy:
 		// for turn 1 to avoid multi-turn validation bugs with Nemotron/Gemma.
 		if attempt == 0 {
 			input.ToolConfig = &sdktypes.ToolConfiguration{
-				Tools:      []sdktypes.Tool{kbTool},
+				Tools:      []sdktypes.Tool{kbTool, resultTool},
 				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
+			}
+		} else {
+			// On subsequent attempts, force the result tool if we have results or it's high attempt
+			input.ToolConfig = &sdktypes.ToolConfiguration{
+				Tools: []sdktypes.Tool{kbTool, resultTool},
+				ToolChoice: &sdktypes.ToolChoiceMemberTool{
+					Value: sdktypes.SpecificToolChoice{
+						Name: aws.String("return_suggestions"),
+					},
+				},
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -310,20 +338,39 @@ Research Strategy:
 		}
 
 		// Final response
+		var aiResponse AIResponse
+		foundResult := false
+
+		for _, block := range output.Content {
+			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
+				if *toolUse.Value.Name == "return_suggestions" {
+					if err := p.UnmarshalSmithyDocument(toolUse.Value.Input, &aiResponse); err != nil {
+						log.Printf("[AGENT] Result Tool Unmarshal Error: %v", err)
+						continue
+					}
+					foundResult = true
+				}
+			}
+		}
+
+		if foundResult {
+			log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
+			return &aiResponse, nil
+		}
+
+		// Fallback for unexpected text output
 		var finalContent string
 		for _, block := range output.Content {
 			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
 				finalContent += text.Value
 			}
 		}
-
-		var aiResponse AIResponse
-		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
-			log.Printf("[AGENT] Final Output (Raw Text): %s", finalContent)
-			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
+		if finalContent != "" {
+			if err := json.Unmarshal([]byte(finalContent), &aiResponse); err == nil {
+				log.Printf("[AGENT] Final result (fallback): didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
+				return &aiResponse, nil
+			}
 		}
-		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
-		return &aiResponse, nil
 	}
 
 	return nil, fmt.Errorf("reached maximum tool use iterations")
