@@ -140,60 +140,6 @@ Research Strategy:
 		// Handle $SUGGESTIONS if needed, but tool use might replace the need for pre-calculated suggestions context
 	}
 
-	// Tool definition
-	kbTool := &sdktypes.ToolMemberToolSpec{
-		Value: sdktypes.ToolSpecification{
-			Name:        aws.String("retrieve_authors_from_kb"),
-			Description: aws.String("Search the UVA Author Knowledge Base. This database contains author names, detailed biographies, and lists of notable works. Use this to find authors related to specific topics, genres, or to disambiguate names."),
-			InputSchema: &sdktypes.ToolInputSchemaMemberJson{
-				Value: document.NewLazyDocument(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"query": map[string]interface{}{
-							"type":        "string",
-							"description": "The search query (e.g. author name, book title, or topic)",
-						},
-						"limit": map[string]interface{}{
-							"type":        "integer",
-							"description": "Maximum number of results to return (default 20, max 50)",
-						},
-					},
-					"required": []string{"query"},
-				}),
-			},
-		},
-	}
-
-	resultTool := &sdktypes.ToolMemberToolSpec{
-		Value: sdktypes.ToolSpecification{
-			Name:        aws.String("return_suggestions"),
-			Description: aws.String("Submit the final list of verified author suggestions and spell corrections. This MUST be called to complete the request."),
-			InputSchema: &sdktypes.ToolInputSchemaMemberJson{
-				Value: document.NewLazyDocument(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"didYouMean": map[string]interface{}{
-							"type":        "string",
-							"description": "Spell correction if the query was misspelled",
-						},
-						"suggestions": map[string]interface{}{
-							"type": "array",
-							"items": map[string]interface{}{
-								"type": "object",
-								"properties": map[string]interface{}{
-									"name":   map[string]interface{}{"type": "string"},
-									"reason": map[string]interface{}{"type": "string"},
-								},
-								"required": []string{"name", "reason"},
-							},
-						},
-					},
-					"required": []string{"suggestions"},
-				}),
-			},
-		},
-	}
-
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
 	log.Printf("[AGENT] Start session: query='%s'", query)
 	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
@@ -229,23 +175,28 @@ Research Strategy:
 			Messages: validMessages,
 		}
 		
-		// Only provide ToolConfig on attempt 0. 
-		// If we find tool results, we'll inject them into the prompt and reset history 
-		// for turn 1 to avoid multi-turn validation bugs with Nemotron/Gemma.
+		// Tool Config
 		if attempt == 0 {
-			input.ToolConfig = &sdktypes.ToolConfiguration{
-				Tools:      []sdktypes.Tool{kbTool, resultTool},
-				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
-			}
-		} else {
-			// On subsequent attempts, force the result tool if we have results or it's high attempt
-			input.ToolConfig = &sdktypes.ToolConfiguration{
-				Tools: []sdktypes.Tool{kbTool, resultTool},
-				ToolChoice: &sdktypes.ToolChoiceMemberTool{
-					Value: sdktypes.SpecificToolChoice{
-						Name: aws.String("return_suggestions"),
+			// Define KB tool locally for the turn
+			kbTool := &sdktypes.ToolMemberToolSpec{
+				Value: sdktypes.ToolSpecification{
+					Name:        aws.String("retrieve_authors_from_kb"),
+					Description: aws.String("Search the UVA Author Knowledge Base. This database contains author names, biographies, and notable works content."),
+					InputSchema: &sdktypes.ToolInputSchemaMemberJson{
+						Value: document.NewLazyDocument(map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"query": map[string]interface{}{"type": "string"},
+								"limit": map[string]interface{}{"type": "integer"},
+							},
+							"required": []string{"query"},
+						}),
 					},
 				},
+			}
+			input.ToolConfig = &sdktypes.ToolConfiguration{
+				Tools:      []sdktypes.Tool{kbTool},
+				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
 			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -321,10 +272,16 @@ Research Strategy:
 
 		if foundToolUse {
 			log.Printf("[AGENT] Stability: Collapsing tool results into prompt and resetting history")
-			// We take the last tool result and append it to our context
-			// In a more complex agent we would handle multiple tool results, 
-			// but here we just need the verified authors.
-			contextUpdate := "\n\nCRITICAL KNOWLEDGE BASE RESEARCH RESULTS:\n" + toolResults[len(toolResults)-1].(*sdktypes.ContentBlockMemberToolResult).Value.Content[0].(*sdktypes.ToolResultContentBlockMemberText).Value
+			// We take the last tool result and inject it into a new single-turn User message.
+			// This avoids Nemotron's 400 error by removing forced tools on the final turn.
+			lastResult := toolResults[len(toolResults)-1].(*sdktypes.ContentBlockMemberToolResult)
+			researchData := ""
+			if len(lastResult.Value.Content) > 0 {
+				if trText, ok := lastResult.Value.Content[0].(*sdktypes.ToolResultContentBlockMemberText); ok {
+					researchData = trText.Value
+				}
+			}
+			contextUpdate := fmt.Sprintf("\n\nVERIFIED RESEARCH FROM CATALOG:\n%s\n\nFinal Instruction: Return the Author suggestions in JSON format ONLY. No preamble.", researchData)
 			
 			messages = []sdktypes.Message{
 				{
@@ -337,40 +294,24 @@ Research Strategy:
 			continue
 		}
 
-		// Final response
+		// Final response turn
 		var aiResponse AIResponse
-		foundResult := false
-
-		for _, block := range output.Content {
-			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
-				if *toolUse.Value.Name == "return_suggestions" {
-					if err := p.UnmarshalSmithyDocument(toolUse.Value.Input, &aiResponse); err != nil {
-						log.Printf("[AGENT] Result Tool Unmarshal Error: %v", err)
-						continue
-					}
-					foundResult = true
-				}
-			}
-		}
-
-		if foundResult {
-			log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
-			return &aiResponse, nil
-		}
-
-		// Fallback for unexpected text output
 		var finalContent string
 		for _, block := range output.Content {
 			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
 				finalContent += text.Value
 			}
 		}
-		if finalContent != "" {
-			if err := json.Unmarshal([]byte(finalContent), &aiResponse); err == nil {
-				log.Printf("[AGENT] Final result (fallback): didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
-				return &aiResponse, nil
-			}
+
+		// Sanitize and Parse
+		finalContent = p.sanitizeJSON(finalContent)
+		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+			log.Printf("[AGENT] Final Output (Raw Text): %s", finalContent)
+			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
 		}
+
+		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
+		return &aiResponse, nil
 	}
 
 	return nil, fmt.Errorf("reached maximum tool use iterations")
@@ -456,6 +397,30 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 	}
 
 	return fmt.Errorf("no unmarshal method found on %T", v)
+}
+
+// sanitizeJSON handles common AI output issues like smart quotes and preamble text
+func (p *BedrockProvider) sanitizeJSON(input string) string {
+	// 1. Extract JSON part from markdown or surrounding text
+	startIdx := strings.Index(input, "{")
+	if startIdx > -1 {
+		endIdx := strings.LastIndex(input, "}")
+		if endIdx > startIdx {
+			input = input[startIdx : endIdx+1]
+		}
+	}
+
+	// 2. Replace smart/curly quotes with standard ASCII equivalents
+	input = strings.ReplaceAll(input, "“", "\"")
+	input = strings.ReplaceAll(input, "”", "\"")
+	input = strings.ReplaceAll(input, "‘", "'")
+	input = strings.ReplaceAll(input, "’", "'")
+
+	// 3. Remove literal newlines/returns within the JSON block
+	input = strings.ReplaceAll(input, "\n", " ")
+	input = strings.ReplaceAll(input, "\r", " ")
+
+	return strings.TrimSpace(input)
 }
 
 // getResponseSchema returns the JSON schema for the AIResponse struct
