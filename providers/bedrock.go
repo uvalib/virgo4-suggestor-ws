@@ -134,6 +134,7 @@ Research Strategy:
 		sb.WriteString("2. Provide 6-10 relevant AUTHOR names in 'suggestions'.\n")
 		sb.WriteString("3. Use the `retrieve_authors_from_kb` tool to find biographies and works if needed.\n")
 		sb.WriteString("4. Return ONLY a JSON object with 'didYouMean' and 'suggestions' keys.\n")
+		sb.WriteString("5. Be extremely concise. Limit internal reasoning to 1-2 sentences maximum before calling tools or returning results.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
@@ -199,13 +200,15 @@ Research Strategy:
 				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		startTurn := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		resp, err := p.BedrockRuntime.Converse(ctx, input)
 		cancel()
+		durationTurn := time.Since(startTurn)
 		if err != nil {
-			return nil, fmt.Errorf("converse error: %w", err)
+			return nil, fmt.Errorf("converse error after %v: %w", durationTurn, err)
 		}
-		log.Printf("[AGENT] Received Converse response. Stop reason: %v", resp.StopReason)
+		log.Printf("[AGENT] Received Converse response. Stop reason: %v (took %v)", resp.StopReason, durationTurn)
 
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
 		messages = p.safeAppendMessage(messages, output)

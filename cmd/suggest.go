@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/uvalib/virgo4-parser/v4parser"
@@ -241,15 +242,19 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		finalSortedSuggestions = []string{}
 	}
 
-	// 4. Always use AI refinement if a provider is available
-	if s.svc.AIProvider != nil {
-		log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors", len(finalSortedSuggestions))
-		
-		// Optional: Update prompt context with counts for the LLM
-		// Construct a context string with counts if we have them
-		authorContext := []string{}
-		if len(finalSortedSuggestions) > 0 {
-			for _, name := range finalSortedSuggestions {
+		// 4. Always use AI refinement if a provider is available
+		if s.svc.AIProvider != nil {
+			// Limit to top 20 authors to bound prompt size and reduce latency
+			limitCount := 20
+			if len(finalSortedSuggestions) < limitCount {
+				limitCount = len(finalSortedSuggestions)
+			}
+			topSuggestions := finalSortedSuggestions[:limitCount]
+			
+			log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors (capped at %d)", len(finalSortedSuggestions), limitCount)
+			
+			authorContext := []string{}
+			for _, name := range topSuggestions {
 				count := counts[name]
 				if count > 0 {
 					authorContext = append(authorContext, fmt.Sprintf("%s (%d resources)", name, count))
@@ -257,56 +262,32 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					authorContext = append(authorContext, name)
 				}
 			}
-		}
 
-		aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, authorContext)
-		if err != nil {
-			log.Printf("ERROR: AI refinement failed: %s. Falling back to simple suggestions.", err.Error())
-		} else {
-			log.Printf("[DEBUG-FLOW] 2. LLM Response: didYouMean='%s', suggestions=%v", aiRes.DidYouMean, aiRes.Suggestions)
-			
-			// 4. Verify AI suggestions
+			startAI := time.Now()
+			aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, authorContext)
+			durationAI := time.Since(startAI)
+			if err != nil {
+				log.Printf("ERROR: AI refinement failed: %s (took %v). Falling back to simple suggestions.", err.Error(), durationAI)
+			} else {
+				log.Printf("[DEBUG-FLOW] 2. LLM Response: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, durationAI)
+			// 4. Trust-based model: Map AI suggestions directly (no Solr verification)
 			verifiedSuggestions := []Suggestion{}
-			
-			// Use a channel for concurrent verification
-			type resultCheck struct {
-				term  string
-				valid bool
-			}
-			checkChan := make(chan resultCheck, len(aiRes.Suggestions))
-			for _, sugg := range aiRes.Suggestions {
-				go func(t string) {
-					valid := s.verifySuggestionResults(t)
-					log.Printf("[VERIFY] '%s' valid: %v", t, valid)
-					checkChan <- resultCheck{term: t, valid: valid}
-				}(strings.TrimSpace(sugg.Name))
-			}
-			// Use a map for quick reason lookup by author name (normalized)
-			reasonMap := make(map[string]string)
-			for _, s := range aiRes.Suggestions {
-				reasonMap[strings.TrimSpace(s.Name)] = s.Reason
-			}
-
-			resultsMap := make(map[string]bool)
-			for i := 0; i < len(aiRes.Suggestions); i++ {
-				r := <-checkChan
-				resultsMap[r.term] = r.valid
-			}
 			for _, s := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(s.Name)
-				if resultsMap[trimmedName] {
+				if trimmedName != "" {
 					verifiedSuggestions = append(verifiedSuggestions, Suggestion{
 						Type:   "author",
 						Value:  trimmedName,
-						Reason: reasonMap[trimmedName],
+						Reason: s.Reason,
 					})
 				}
 			}
+
 			if len(verifiedSuggestions) > 0 {
 				res.Suggestions = verifiedSuggestions
 				return res, nil
 			}
-			log.Printf("WARNING: AI refinement produced 0 verified suggestions for query '%s'. Falling back to Solr.", s.parsedQuery)
+			log.Printf("WARNING: AI refinement produced 0 valid suggestions for query '%s'. Falling back to Solr.", s.parsedQuery)
 		}
 	}
 
