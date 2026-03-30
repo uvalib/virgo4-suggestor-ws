@@ -111,16 +111,13 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
-	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions in JSON format. 
+	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions.
 IMPORTANT: For every incoming USER query, you MUST use the 'retrieve_authors_from_kb' tool to research and verify authors in our official catalog.
 Research Strategy:
 1. Use the 'retrieve_authors_from_kb' tool at least once per request to find verified authors.
-2. If the query is a topic (e.g., "Singularity"), do NOT just search for the topic. Search for "Famous authors of [topic]" or "Who wrote about [topic]?" to find relevant names.
-3. If your first search returns noisy/irrelevant names or lacks definitive matches, use the tool AGAIN with a more specific query (e.g. searching for specific names you know are famous for this topic).
-4. Return a JSON object with 'didYouMean' (string) and 'suggestions' (array of objects). Use ONLY standard ASCII double-quotes (") for JSON and avoid any smart/curly quotes.
-5. Each suggestion object MUST have: 'name' (the author name) and 'reason' (a short explanation of why they are relevant).
-6. Return ONLY authors that you have verified are present in the Knowledge Base results.
-7. CRITICAL: Do NOT include literal newlines inside JSON string values.`
+2. If the query is a topic, search for "Famous authors of [topic]" to find relevant names.
+3. Return ONLY verified authors present in the Knowledge Base results.
+4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).`
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -200,6 +197,18 @@ Research Strategy:
 				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 			},
 			Messages: validMessages,
+			Output: &sdktypes.OutputConfig{
+				TextFormat: &sdktypes.OutputFormat{
+					Type: sdktypes.OutputFormatTypeJson,
+					Structure: &sdktypes.OutputFormatStructureMemberJsonSchema{
+						Value: sdktypes.JsonSchema{
+							Name:        aws.String("author_suggestions"),
+							Description: aws.String("List of verified author suggestions and spell check"),
+							Schema:      p.getResponseSchema(),
+						},
+					},
+				},
+			},
 		}
 		
 		// Only provide ToolConfig on attempt 0. 
@@ -308,9 +317,6 @@ Research Strategy:
 			}
 		}
 
-		// Sanitize JSON (Smart quotes, etc)
-		finalContent = p.sanitizeJSON(finalContent)
-
 		var aiResponse AIResponse
 		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
 			log.Printf("[AGENT] Final Output (Raw Text): %s", finalContent)
@@ -405,25 +411,24 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 	return fmt.Errorf("no unmarshal method found on %T", v)
 }
 
-// sanitizeJSON handles common AI output issues like smart quotes and literal newlines in strings
-func (p *BedrockProvider) sanitizeJSON(input string) string {
-	// 1. Extract JSON part from markdown or surrounding text
-	startIdx := strings.Index(input, "{")
-	if startIdx > -1 {
-		endIdx := strings.LastIndex(input, "}")
-		input = input[startIdx : endIdx+1]
-	}
-
-	// 2. Replace smart/curly quotes with standard ASCII equivalents
-	input = strings.ReplaceAll(input, "“", "\"")
-	input = strings.ReplaceAll(input, "”", "\"")
-	input = strings.ReplaceAll(input, "‘", "'")
-	input = strings.ReplaceAll(input, "’", "'")
-
-	// 3. Remove literal newlines/returns within the JSON block
-	// json.Unmarshal handles spaces between tokens, but literal 0x0A inside strings is an error.
-	input = strings.ReplaceAll(input, "\n", " ")
-	input = strings.ReplaceAll(input, "\r", " ")
-
-	return strings.TrimSpace(input)
+// getResponseSchema returns the JSON schema for the AIResponse struct
+func (p *BedrockProvider) getResponseSchema() string {
+	return `{
+  "type": "object",
+  "properties": {
+    "didYouMean": { "type": ["string", "null"] },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "reason": { "type": "string" }
+        },
+        "required": ["name", "reason"]
+      }
+    }
+  },
+  "required": ["suggestions"]
+}`
 }

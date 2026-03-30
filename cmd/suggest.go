@@ -279,12 +279,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					valid := s.verifySuggestionResults(t)
 					log.Printf("[VERIFY] '%s' valid: %v", t, valid)
 					checkChan <- resultCheck{term: t, valid: valid}
-				}(sugg.Name)
+				}(strings.TrimSpace(sugg.Name))
 			}
-			// Use a map for quick reason lookup by author name
+			// Use a map for quick reason lookup by author name (normalized)
 			reasonMap := make(map[string]string)
 			for _, s := range aiRes.Suggestions {
-				reasonMap[s.Name] = s.Reason
+				reasonMap[strings.TrimSpace(s.Name)] = s.Reason
 			}
 
 			resultsMap := make(map[string]bool)
@@ -293,16 +293,20 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				resultsMap[r.term] = r.valid
 			}
 			for _, s := range aiRes.Suggestions {
-				if resultsMap[s.Name] {
+				trimmedName := strings.TrimSpace(s.Name)
+				if resultsMap[trimmedName] {
 					verifiedSuggestions = append(verifiedSuggestions, Suggestion{
 						Type:   "author",
-						Value:  s.Name,
-						Reason: reasonMap[s.Name],
+						Value:  trimmedName,
+						Reason: reasonMap[trimmedName],
 					})
 				}
 			}
-			res.Suggestions = verifiedSuggestions
-			return res, nil
+			if len(verifiedSuggestions) > 0 {
+				res.Suggestions = verifiedSuggestions
+				return res, nil
+			}
+			log.Printf("WARNING: AI refinement produced 0 verified suggestions for query '%s'. Falling back to Solr.", s.parsedQuery)
 		}
 	}
 
