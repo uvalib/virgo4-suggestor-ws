@@ -235,6 +235,10 @@ IMPORTANT RULES:
 			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 		},
 		Messages: messages,
+		InferenceConfig: &sdktypes.InferenceConfiguration{
+			MaxTokens: aws.Int32(300),
+			Temperature: aws.Float32(0.2), // Low temp for faster, more deterministic output
+		},
 	}
 	
 	startTurn := time.Now()

@@ -190,16 +190,19 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	var ctxData providers.SuggestionContextData
 	var wg sync.WaitGroup
 
-	// We'll run 3 concurrent requests if available
-	wg.Add(3)
+	// We'll run 2 concurrent requests
+	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
 		log.Printf("[ASYNC] Starting Solr context query")
 		
+		baseParams := s.svc.config.Suggestions.Author.Params
 		solrReq := SolrRequest{}
 		solrReq.json.Params = SolrRequestParams{
 			Q:          rawQuery,
+			DefType:    baseParams.DefType,
+			Qf:         baseParams.Qf,
 			Rows:       5,
 			Facet:      true,
 			FacetLimit: 5,
@@ -255,20 +258,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		log.Printf("[ASYNC] Finished KB retrieval")
 	}()
 
-	go func() {
-		defer wg.Done()
-		if s.svc.AIProvider == nil {
-			return
-		}
-		log.Printf("[ASYNC] Starting AI Query Dissection")
-		dissected, err := s.svc.AIProvider.DissectQuery(rawQuery)
-		if err != nil {
-			log.Printf("[ASYNC] DissectQuery warning: %s", err.Error())
-			return
-		}
-		ctxData.Dissected = dissected
-		log.Printf("[ASYNC] Finished AI Query Dissection")
-	}()
+
 
 	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
 	// so slow backends don't hold up the entire suggestion request.
