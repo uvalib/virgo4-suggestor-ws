@@ -182,9 +182,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 
-	rawQuery := s.req.Query
+	rawQuery := s.parsedQuery
 	if rawQuery == "" {
-		rawQuery = s.parsedQuery
+		rawQuery = s.req.Query
 	}
 
 	var ctxData providers.SuggestionContextData

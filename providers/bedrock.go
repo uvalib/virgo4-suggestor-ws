@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	sdktypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
@@ -169,20 +168,26 @@ Return ONLY valid JSON matching this schema:
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData) (*AIResponse, error) {
-	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions.
-IMPORTANT: For every incoming USER query, you MUST use the 'retrieve_authors_from_kb' tool to research and verify authors in our official catalog.
-Research Strategy:
-1. Use the 'retrieve_authors_from_kb' tool at least once per request to find verified authors.
-2. If the query is a topic, search for "Famous authors of [topic]" to find relevant names.
-3. Return ONLY verified authors present in the Knowledge Base results.
-4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).`
+	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
+IMPORTANT RULES:
+1. DO NOT use <think> tags or output internal reasoning. 
+2. DO NOT output any conversational text or formatting outside of the JSON block.
+3. If the query is a topic, suggest verified authors associated with that topic.
+4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).
+5. Output MUST be ONLY valid JSON matching this schema:
+{
+  "didYouMean": "correction if misspelled or null",
+  "suggestions": [
+     { "name": "Author Name", "reason": "Why they are relevant" }
+  ]
+}`
 
 	userPrompt := ""
 	if customPrompt == "" {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("The user is searching for: \"%s\".\n\n", query))
+		sb.WriteString(fmt.Sprintf("USER QUERY: \"%s\"\n\n", query))
 		
-		sb.WriteString("=== Background Research (from Solr and Knowledge Base) ===\n")
+		sb.WriteString("=== BACKGROUND RESEARCH FROM CATALOG ===\n")
 		if len(suggContext.SolrTitles) > 0 {
 			sb.WriteString(fmt.Sprintf("Top catalog item titles: %v\n", suggContext.SolrTitles))
 		}
@@ -201,18 +206,12 @@ Research Strategy:
 				sb.WriteString(fmt.Sprintf("Conceptually related authors: %v\n", suggContext.Dissected.RelatedAuthors))
 			}
 		}
-		sb.WriteString("========================================================\n\n")
+		sb.WriteString("=========================================\n\n")
 
-		sb.WriteString("\nFollow these rules:\n")
-		sb.WriteString("1. If the query is misspelled, provide the correction in 'didYouMean'.\n")
-		sb.WriteString("2. Provide 6-10 relevant AUTHOR names in 'suggestions'. Prioritize authors found in the Background Research.\n")
-		sb.WriteString("3. Use the `retrieve_authors_from_kb` tool to find biographies and works if needed to expand laterally.\n")
-		sb.WriteString("4. Return ONLY a JSON object with 'didYouMean' and 'suggestions' keys.\n")
-		sb.WriteString("5. Be extremely concise. Limit internal reasoning to 1-2 sentences maximum before calling tools or returning results.\n")
+		sb.WriteString("INSTRUCTION: Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output ONLY the raw JSON object. NO markdown formatting. NO comments.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
-		// We could try to inject $RESEARCH context here if needed
 	}
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
@@ -229,169 +228,47 @@ Research Strategy:
 		},
 	}
 
-	// Reasoning Loop
-	for attempt := 0; attempt < 5; attempt++ {
-		// Role Sequence & Content Count Logging
-		roleSeq := ""
-		var validMessages []sdktypes.Message
-		for _, m := range messages {
-			if len(m.Content) > 0 {
-				roleSeq += fmt.Sprintf("[%v(%d)] ", m.Role, len(m.Content))
-				validMessages = append(validMessages, m)
-			}
+	// Single Turn Completion (RAG Pattern)
+	input := &bedrockruntime.ConverseInput{
+		ModelId: aws.String(p.Model),
+		System: []sdktypes.SystemContentBlock{
+			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+		Messages: messages,
+	}
+	
+	startTurn := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	resp, err := p.BedrockRuntime.Converse(ctx, input)
+	cancel()
+	durationTurn := time.Since(startTurn)
+	
+	if err != nil {
+		return nil, fmt.Errorf("converse error after %v: %w", durationTurn, err)
+	}
+	
+	log.Printf("[AGENT] Completed Inference in %v", durationTurn)
+
+	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+	
+	// Final response parsing
+	var aiResponse AIResponse
+	var finalContent string
+	for _, block := range output.Content {
+		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+			finalContent += text.Value
 		}
-		log.Printf("[AGENT] Message History Roles: %s", roleSeq)
-
-		input := &bedrockruntime.ConverseInput{
-			ModelId: aws.String(p.Model),
-			System: []sdktypes.SystemContentBlock{
-				&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
-			},
-			Messages: validMessages,
-		}
-		
-		// Tool Config
-		if attempt == 0 {
-			// Define KB tool locally for the turn
-			kbTool := &sdktypes.ToolMemberToolSpec{
-				Value: sdktypes.ToolSpecification{
-					Name:        aws.String("retrieve_authors_from_kb"),
-					Description: aws.String("Search the UVA Author Knowledge Base. This database contains author names, biographies, and notable works content."),
-					InputSchema: &sdktypes.ToolInputSchemaMemberJson{
-						Value: document.NewLazyDocument(map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"query": map[string]interface{}{"type": "string"},
-								"limit": map[string]interface{}{"type": "integer"},
-							},
-							"required": []string{"query"},
-						}),
-					},
-				},
-			}
-			input.ToolConfig = &sdktypes.ToolConfiguration{
-				Tools:      []sdktypes.Tool{kbTool},
-				ToolChoice: &sdktypes.ToolChoiceMemberAny{},
-			}
-		}
-		startTurn := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		resp, err := p.BedrockRuntime.Converse(ctx, input)
-		cancel()
-		durationTurn := time.Since(startTurn)
-		if err != nil {
-			return nil, fmt.Errorf("converse error after %v: %w", durationTurn, err)
-		}
-		log.Printf("[AGENT] Received Converse response. Stop reason: %v (took %v)", resp.StopReason, durationTurn)
-
-		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-		messages = p.safeAppendMessage(messages, output)
-
-		// Process Tool Use
-		foundToolUse := false
-		var toolResults []sdktypes.ContentBlock
-		resultsCache := make(map[string]string)
-		
-		for _, block := range output.Content {
-			if toolUse, ok := block.(*sdktypes.ContentBlockMemberToolUse); ok {
-				foundToolUse = true
-
-				var toolInput struct {
-					Query string `json:"query"`
-					Limit int    `json:"limit"`
-				}
-				if err := p.UnmarshalSmithyDocument(toolUse.Value.Input, &toolInput); err != nil {
-					log.Printf("[AGENT] KB Tool Unmarshal Error: %v", err)
-					continue
-				}
-				
-				log.Printf("[AGENT] KB Tool Call: %s (query: '%s', limit: %d)", *toolUse.Value.Name, toolInput.Query, toolInput.Limit)
-				
-				var toolOutput string
-				if *toolUse.Value.Name == "retrieve_authors_from_kb" {
-					cacheKey := fmt.Sprintf("%s:%d", toolInput.Query, toolInput.Limit)
-					if cached, ok := resultsCache[cacheKey]; ok {
-						toolOutput = cached
-						log.Printf("[AGENT] KB Tool Cache Hit for '%s'", toolInput.Query)
-					} else {
-						actualLimit := toolInput.Limit
-						if actualLimit <= 0 {
-							actualLimit = 20
-						}
-						searchQuery := toolInput.Query
-						if strings.TrimSpace(searchQuery) == "" {
-							log.Printf("[AGENT] KB Tool Warning: Model sent empty query, defaulting to original query '%s'", query)
-							searchQuery = query
-						}
-
-						kbResults, err := p.Retrieve(searchQuery, actualLimit)
-						if err != nil {
-							toolOutput = fmt.Sprintf("Error retrieving from KB: %v", err)
-							log.Printf("[AGENT] KB Tool Error: %v", err)
-						} else {
-							toolOutput = fmt.Sprintf("KB Results: [%s]", strings.Join(kbResults, ", "))
-							log.Printf("[AGENT] KB Results: [%s] (limit: %d)", strings.Join(kbResults, ", "), actualLimit)
-						}
-						resultsCache[cacheKey] = toolOutput
-					}
-				}
-
-				toolResults = append(toolResults, &sdktypes.ContentBlockMemberToolResult{
-					Value: sdktypes.ToolResultBlock{
-						ToolUseId: toolUse.Value.ToolUseId,
-						Content: []sdktypes.ToolResultContentBlock{
-							&sdktypes.ToolResultContentBlockMemberText{Value: toolOutput},
-						},
-					},
-				})
-			}
-		}
-
-		if foundToolUse {
-			log.Printf("[AGENT] Stability: Collapsing tool results into prompt and resetting history")
-			// We take the last tool result and inject it into a new single-turn User message.
-			// This avoids Nemotron's 400 error by removing forced tools on the final turn.
-			lastResult := toolResults[len(toolResults)-1].(*sdktypes.ContentBlockMemberToolResult)
-			researchData := ""
-			if len(lastResult.Value.Content) > 0 {
-				if trText, ok := lastResult.Value.Content[0].(*sdktypes.ToolResultContentBlockMemberText); ok {
-					researchData = trText.Value
-				}
-			}
-			contextUpdate := fmt.Sprintf("\n\nVERIFIED RESEARCH FROM CATALOG:\n%s\n\nFinal Instruction: Return the Author suggestions in JSON format ONLY. No preamble.", researchData)
-			
-			messages = []sdktypes.Message{
-				{
-					Role: sdktypes.ConversationRoleUser,
-					Content: []sdktypes.ContentBlock{
-						&sdktypes.ContentBlockMemberText{Value: userPrompt + contextUpdate},
-					},
-				},
-			}
-			continue
-		}
-
-		// Final response turn
-		var aiResponse AIResponse
-		var finalContent string
-		for _, block := range output.Content {
-			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-				finalContent += text.Value
-			}
-		}
-
-		// Sanitize and Parse
-		finalContent = p.sanitizeJSON(finalContent)
-		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
-			log.Printf("[AGENT] Final Output (Raw Text): %s", finalContent)
-			return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
-		}
-
-		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions=%v", aiResponse.DidYouMean, aiResponse.Suggestions)
-		return &aiResponse, nil
 	}
 
-	return nil, fmt.Errorf("reached maximum tool use iterations")
+	// Sanitize and Parse
+	finalContent = p.sanitizeJSON(finalContent)
+	if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+		log.Printf("[AGENT] Final Output (Raw Text after sanitize): %s", finalContent)
+		return nil, fmt.Errorf("failed to parse AI response: %w", err)
+	}
+
+	log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
+	return &aiResponse, nil
 }
 
 // safeAppendMessage ensures that messages alternate roles correctly and removes empty content
@@ -478,6 +355,23 @@ func (p *BedrockProvider) UnmarshalSmithyDocument(v interface{}, target interfac
 
 // sanitizeJSON handles common AI output issues like smart quotes and preamble text
 func (p *BedrockProvider) sanitizeJSON(input string) string {
+	// 0. Aggressively strip out generic <think> tags which some models dump
+	for {
+		startThink := strings.Index(input, "<think>")
+		endThink := strings.Index(input, "</think>")
+		if startThink != -1 && endThink != -1 && endThink > startThink {
+			input = input[:startThink] + input[endThink+len("</think>"):]
+		} else {
+			break
+		}
+	}
+	
+	// Also strip if malformed trailing </think> left behind
+	lastThink := strings.LastIndex(input, "</think>")
+	if lastThink != -1 {
+		input = input[lastThink+len("</think>"):]
+	}
+
 	// 1. Extract JSON part from markdown or surrounding text
 	startIdx := strings.Index(input, "{")
 	if startIdx > -1 {
