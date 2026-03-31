@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/uvalib/virgo4-parser/v4parser"
+	"github.com/uvalib/virgo4-suggestor-ws/providers"
 	"gonum.org/v1/gonum/stat"
 )
 
@@ -169,132 +171,153 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 }
 
 // HandleSuggestionRequest takes a keyword query and tries to find suggested searches
-// based on it.  Errors result in empty suggestions.
+// based on it using a parallel Context Gathering approach.
 func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
-	// 1. Get existing Solr-based author suggestions
-	authorRes, err := s.HandleAuthorSuggestionRequest()
-	if err != nil {
-		log.Printf("WARNING: Solr author suggestion failed: %v. Proceeding with KB only.", err)
-		// If parsing failed, use raw query for AI context
+	// Ensure query is parsed (though we might use the raw query for the LLM)
+	if err := s.ParseQuery(); err != nil {
 		if s.parsedQuery == "" {
 			s.parsedQuery = s.req.Query
 		}
 	}
 
-	existingSuggestions := []string{}
-	if authorRes != nil {
-		for _, sugg := range authorRes.Suggestions {
-			existingSuggestions = append(existingSuggestions, sugg.Value)
-		}
-	}
-	// 2. We skip manual KB retrieval here to save latency.
-	// The AI will autonomously use the KB tool if Solr results are insufficient.
-	kbSuggestions := []string{}
-
-	// 3. Combine and Re-rank based on resource counts
-	combinedAuthors := []string{}
-	existingMap := make(map[string]bool)
-	for _, as := range existingSuggestions {
-		if !existingMap[as] {
-			combinedAuthors = append(combinedAuthors, as)
-			existingMap[as] = true
-		}
-	}
-	for _, ks := range kbSuggestions {
-		if !existingMap[ks] {
-			combinedAuthors = append(combinedAuthors, ks)
-			existingMap[ks] = true
-		}
+	rawQuery := s.req.Query
+	if rawQuery == "" {
+		rawQuery = s.parsedQuery
 	}
 
-	// Get counts and sort
-	var finalSortedSuggestions []string
-	counts := make(map[string]int)
-	if len(combinedAuthors) > 0 {
-		var err error
-		counts, err = s.GetAuthorResourceCounts(combinedAuthors)
+	var ctxData providers.SuggestionContextData
+	var wg sync.WaitGroup
+
+	// We'll run 3 concurrent requests if available
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		log.Printf("[ASYNC] Starting Solr context query")
+		
+		solrReq := SolrRequest{}
+		solrReq.json.Params = SolrRequestParams{
+			Q:          rawQuery,
+			Rows:       5,
+			Facet:      true,
+			FacetLimit: 5,
+			FacetMin:   1,
+			FacetField: []string{"subject_facet", "author_facet"},
+		}
+
+		solrRes, err := s.SolrQuery(&solrReq)
 		if err != nil {
-			log.Printf("WARNING: Failed to get resource counts: %v. Using original order.", err)
-			finalSortedSuggestions = combinedAuthors
-		} else {
-			// Sort combining Solr score logic (if we had it) and count.
-			// For now, primary sort is resource count descending.
-			sort.Slice(combinedAuthors, func(i, j int) bool {
-				countI := counts[combinedAuthors[i]]
-				countJ := counts[combinedAuthors[j]]
-				if countI != countJ {
-					return countI > countJ
-				}
-				return combinedAuthors[i] < combinedAuthors[j] // alpha stable
-			})
-			finalSortedSuggestions = combinedAuthors
-			
-			// Log the top 5 after re-ranking
-			limit := 5
-			if len(finalSortedSuggestions) < 5 {
-				limit = len(finalSortedSuggestions)
-			}
-			log.Printf("[RANK] Top %d authors after resource-count re-ranking: %v", limit, finalSortedSuggestions[:limit])
+			log.Printf("[ASYNC] Solr warning: %s", err.Error())
+			return
 		}
-	} else {
-		finalSortedSuggestions = []string{}
+
+		// Extract Titles
+		for _, doc := range solrRes.Response.Docs {
+			if len(doc.Title) > 0 {
+				ctxData.SolrTitles = append(ctxData.SolrTitles, doc.Title[0])
+			}
+		}
+
+		// Extract Facets safely
+		if solrRes.FacetCounts.FacetFields != nil {
+			if subjects, ok := solrRes.FacetCounts.FacetFields["subject_facet"]; ok {
+				for i := 0; i < len(subjects); i += 2 {
+					if subjStr, ok := subjects[i].(string); ok {
+						ctxData.SolrSubjectFacet = append(ctxData.SolrSubjectFacet, subjStr)
+					}
+				}
+			}
+			if authors, ok := solrRes.FacetCounts.FacetFields["author_facet"]; ok {
+				for i := 0; i < len(authors); i += 2 {
+					if authStr, ok := authors[i].(string); ok {
+						ctxData.SolrAuthorFacet = append(ctxData.SolrAuthorFacet, authStr)
+					}
+				}
+			}
+		}
+		log.Printf("[ASYNC] Finished Solr context query")
+	}()
+
+	go func() {
+		defer wg.Done()
+		if s.svc.AIProvider == nil {
+			return
+		}
+		log.Printf("[ASYNC] Starting KB retrieval")
+		kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 5)
+		if err != nil {
+			log.Printf("[ASYNC] KB warning: %s", err.Error())
+			return
+		}
+		ctxData.KBAuthors = kbResults
+		log.Printf("[ASYNC] Finished KB retrieval")
+	}()
+
+	go func() {
+		defer wg.Done()
+		if s.svc.AIProvider == nil {
+			return
+		}
+		log.Printf("[ASYNC] Starting AI Query Dissection")
+		dissected, err := s.svc.AIProvider.DissectQuery(rawQuery)
+		if err != nil {
+			log.Printf("[ASYNC] DissectQuery warning: %s", err.Error())
+			return
+		}
+		ctxData.Dissected = dissected
+		log.Printf("[ASYNC] Finished AI Query Dissection")
+	}()
+
+	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
+	// so slow backends don't hold up the entire suggestion request.
+	startWait := time.Now()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("[ASYNC] Phase 1 completed successfully in %v", time.Since(startWait))
+	case <-time.After(3 * time.Second):
+		log.Printf("[ASYNC] Phase 1 timed out after 3 seconds. Proceeding with partial gathered context.")
 	}
 
-		// 4. Always use AI refinement if a provider is available
-		if s.svc.AIProvider != nil {
-			// Limit to top 20 authors to bound prompt size and reduce latency
-			limitCount := 20
-			if len(finalSortedSuggestions) < limitCount {
-				limitCount = len(finalSortedSuggestions)
-			}
-			topSuggestions := finalSortedSuggestions[:limitCount]
+	if s.svc.AIProvider != nil {
+		startRefine := time.Now()
+		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData)
+		if err != nil {
+			log.Printf("ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startRefine))
+		} else {
+			log.Printf("[DEBUG-FLOW] Final AI Suggestions: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, time.Since(startRefine))
 			
-			log.Printf("[DEBUG-FLOW] Starting AI refinement with %d context authors (capped at %d)", len(finalSortedSuggestions), limitCount)
-			
-			authorContext := []string{}
-			for _, name := range topSuggestions {
-				count := counts[name]
-				if count > 0 {
-					authorContext = append(authorContext, fmt.Sprintf("%s (%d resources)", name, count))
-				} else {
-					authorContext = append(authorContext, name)
-				}
-			}
-
-			startAI := time.Now()
-			aiRes, err := s.svc.AIProvider.GetSuggestions(s.parsedQuery, s.req.AIPrompt, authorContext)
-			durationAI := time.Since(startAI)
-			if err != nil {
-				log.Printf("ERROR: AI refinement failed: %s (took %v). Falling back to simple suggestions.", err.Error(), durationAI)
-			} else {
-				log.Printf("[DEBUG-FLOW] 2. LLM Response: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, durationAI)
-			// 4. Trust-based model: Map AI suggestions directly (no Solr verification)
-			verifiedSuggestions := []Suggestion{}
-			for _, s := range aiRes.Suggestions {
-				trimmedName := strings.TrimSpace(s.Name)
+			for _, sugg := range aiRes.Suggestions {
+				trimmedName := strings.TrimSpace(sugg.Name)
 				if trimmedName != "" {
-					verifiedSuggestions = append(verifiedSuggestions, Suggestion{
+					res.Suggestions = append(res.Suggestions, Suggestion{
 						Type:   "author",
 						Value:  trimmedName,
-						Reason: s.Reason,
+						Reason: sugg.Reason,
 					})
 				}
 			}
-
-			if len(verifiedSuggestions) > 0 {
-				res.Suggestions = verifiedSuggestions
+			
+			if len(res.Suggestions) > 0 {
 				return res, nil
 			}
-			log.Printf("WARNING: AI refinement produced 0 valid suggestions for query '%s'. Falling back to Solr.", s.parsedQuery)
+			log.Printf("WARNING: AI refinement produced 0 valid suggestions. Returning empty.")
 		}
 	}
-
-	// 5. Fallback: Return combined authors directly if AI fails or is missing
-	for _, s := range finalSortedSuggestions {
-		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: s})
+	
+	// If AI fails/missing, return what we found in KB or Solr exactly if any.
+	// But mostly we expect AI to handle this.
+	for _, a := range ctxData.KBAuthors {
+		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: a})
 	}
+
 	return res, nil
 }
 

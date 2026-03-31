@@ -109,8 +109,66 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 	return results, nil
 }
 
+// DissectQuery pre-processes the query to find synonyms, alternative phrases, and immediate authors
+func (p *BedrockProvider) DissectQuery(query string) (*DissectedQuery, error) {
+	systemPrompt := `You are an expert librarian assisting with search query analysis.
+Analyze the provided user query and identify:
+1. synonyms: Alternate words for the core concepts.
+2. alternativePhrases: Different ways to phrase the search.
+3. relatedAuthors: Any obvious and verified famous authors closely related to this topic.
+Return ONLY valid JSON matching this schema:
+{
+  "synonyms": ["string"],
+  "alternativePhrases": ["string"],
+  "relatedAuthors": ["string"]
+}`
+
+	userPrompt := fmt.Sprintf("Analyze this search query: \"%s\"", query)
+
+	messages := []sdktypes.Message{
+		{
+			Role: sdktypes.ConversationRoleUser,
+			Content: []sdktypes.ContentBlock{
+				&sdktypes.ContentBlockMemberText{Value: userPrompt},
+			},
+		},
+	}
+
+	input := &bedrockruntime.ConverseInput{
+		ModelId: aws.String(p.Model),
+		System: []sdktypes.SystemContentBlock{
+			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+		Messages: messages,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	resp, err := p.BedrockRuntime.Converse(ctx, input)
+	cancel()
+	
+	if err != nil {
+		return nil, fmt.Errorf("DissectQuery converse error: %w", err)
+	}
+
+	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+	var finalContent string
+	for _, block := range output.Content {
+		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+			finalContent += text.Value
+		}
+	}
+
+	finalContent = p.sanitizeJSON(finalContent)
+	var dissected DissectedQuery
+	if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
+		return nil, fmt.Errorf("failed to parse DissectQuery response: %w (content: %s)", err, finalContent)
+	}
+
+	return &dissected, nil
+}
+
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
-func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, existingSuggestions []string) (*AIResponse, error) {
+func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData) (*AIResponse, error) {
 	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions.
 IMPORTANT: For every incoming USER query, you MUST use the 'retrieve_authors_from_kb' tool to research and verify authors in our official catalog.
 Research Strategy:
@@ -122,23 +180,39 @@ Research Strategy:
 	userPrompt := ""
 	if customPrompt == "" {
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("The user is searching for: \"%s\".\n", query))
-		if len(existingSuggestions) > 0 {
-			sb.WriteString("Existing suggestions from our catalog:\n")
-			for i, s := range existingSuggestions {
-				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, s))
+		sb.WriteString(fmt.Sprintf("The user is searching for: \"%s\".\n\n", query))
+		
+		sb.WriteString("=== Background Research (from Solr and Knowledge Base) ===\n")
+		if len(suggContext.SolrTitles) > 0 {
+			sb.WriteString(fmt.Sprintf("Top catalog item titles: %v\n", suggContext.SolrTitles))
+		}
+		if len(suggContext.SolrSubjectFacet) > 0 {
+			sb.WriteString(fmt.Sprintf("Top catalog subjects: %v\n", suggContext.SolrSubjectFacet))
+		}
+		if len(suggContext.SolrAuthorFacet) > 0 {
+			sb.WriteString(fmt.Sprintf("Top catalog authors: %v\n", suggContext.SolrAuthorFacet))
+		}
+		if len(suggContext.KBAuthors) > 0 {
+			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %v\n", suggContext.KBAuthors))
+		}
+		if suggContext.Dissected != nil {
+			sb.WriteString(fmt.Sprintf("Related terms/synonyms: %v\n", suggContext.Dissected.Synonyms))
+			if len(suggContext.Dissected.RelatedAuthors) > 0 {
+				sb.WriteString(fmt.Sprintf("Conceptually related authors: %v\n", suggContext.Dissected.RelatedAuthors))
 			}
 		}
+		sb.WriteString("========================================================\n\n")
+
 		sb.WriteString("\nFollow these rules:\n")
 		sb.WriteString("1. If the query is misspelled, provide the correction in 'didYouMean'.\n")
-		sb.WriteString("2. Provide 6-10 relevant AUTHOR names in 'suggestions'.\n")
-		sb.WriteString("3. Use the `retrieve_authors_from_kb` tool to find biographies and works if needed.\n")
+		sb.WriteString("2. Provide 6-10 relevant AUTHOR names in 'suggestions'. Prioritize authors found in the Background Research.\n")
+		sb.WriteString("3. Use the `retrieve_authors_from_kb` tool to find biographies and works if needed to expand laterally.\n")
 		sb.WriteString("4. Return ONLY a JSON object with 'didYouMean' and 'suggestions' keys.\n")
 		sb.WriteString("5. Be extremely concise. Limit internal reasoning to 1-2 sentences maximum before calling tools or returning results.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
-		// Handle $SUGGESTIONS if needed, but tool use might replace the need for pre-calculated suggestions context
+		// We could try to inject $RESEARCH context here if needed
 	}
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
