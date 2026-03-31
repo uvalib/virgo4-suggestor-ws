@@ -174,9 +174,10 @@ IMPORTANT RULES:
 2. DO NOT output any conversational text or formatting outside of the JSON block.
 3. If the query is a topic, suggest verified authors associated with that topic.
 4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).
-5. Output MUST be ONLY valid JSON matching this schema:
+5. Output MUST be ONLY the raw JSON object matching the following schema. 
+CRITICAL: DO NOT include any preamble, introductory text, markdown formatting (like triple-backtick json), or follow-up comments.
 {
-  "didYouMean": "correction if misspelled or null",
+  "didYouMean": "string or null",
   "suggestions": [
      { "name": "Author Name", "reason": "Why they are relevant" }
   ]
@@ -236,8 +237,8 @@ IMPORTANT RULES:
 		},
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
-			MaxTokens: aws.Int32(300),
-			Temperature: aws.Float32(0.2), // Low temp for faster, more deterministic output
+			MaxTokens: aws.Int32(1000), // Increased to ensure the JSON is not cut off by chatty models
+			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
 		},
 	}
 	
@@ -382,7 +383,15 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 		endIdx := strings.LastIndex(input, "}")
 		if endIdx > startIdx {
 			input = input[startIdx : endIdx+1]
+		} else {
+			// If we found a '{' but no closing '}', it's definitely invalid
+			// or truncated. Let's still trim leading and return.
+			input = input[startIdx:]
 		}
+	} else {
+		// If no '{' is found at all, the AI response contains no JSON.
+		// Return empty JSON object to prevent unmarshal errors and allow caller to handle.
+		return "{}"
 	}
 
 	// 2. Replace smart/curly quotes with standard ASCII equivalents

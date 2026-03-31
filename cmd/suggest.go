@@ -204,10 +204,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			DefType:    baseParams.DefType,
 			Qf:         baseParams.Qf,
 			Rows:       5,
-			Facet:      true,
-			FacetLimit: 5,
-			FacetMin:   1,
-			FacetField: []string{"subject_facet", "author_facet"},
 		}
 
 		solrRes, err := s.SolrQuery(&solrReq)
@@ -305,7 +301,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	// If AI fails/missing, return what we found in KB or Solr exactly if any.
 	// But mostly we expect AI to handle this.
 	for _, a := range ctxData.KBAuthors {
-		res.Suggestions = append(res.Suggestions, Suggestion{Type: "author", Value: a})
+		res.Suggestions = append(res.Suggestions, Suggestion{
+			Type:   "author", 
+			Value:  a,
+			Reason: "Verified author from catalog",
+		})
 	}
 
 	return res, nil
