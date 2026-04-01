@@ -36,7 +36,7 @@ func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Clien
 	}
 
 	// Final stabilized model choice for deployment
-	bedrockModel := "nvidia.nemotron-nano-9b-v2"
+	bedrockModel := "google.gemma-3-4b-it"
 	if model != "" {
 		bedrockModel = model
 	}
