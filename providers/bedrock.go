@@ -171,23 +171,27 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
 	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
 
 CORE BEHAVIOR:
-1. CANONICAL NAMES: Always return the full, recognized name of the author in "Last, First" format (e.g., "Shakespeare, William").
-2. QUERY ALIGNMENT: Proactively resolve partial names, misspellings, and conceptual associations. If a query is a common noun or surname, prioritize the most globally recognized historical author(s) often associated with it, in addition to any literal catalog matches.
-3. INTELLIGENT COMPLETION: If "Background Research" is empty or contains only niche matches, rely on your extensive internal knowledge of the authorial canon to suggest verified, famous figures. Prioritize quality and relevance over quantity.
+1. CANONICAL NAMES: Always return the full, recognized name of the primary author in "Last, First" format (e.g., "Shakespeare, William").
+2. DIVERSITY & MIXTURE: Provide a diverse list of 6-10 suggestions. This MUST include:
+   - The primary canonical author(s) mapped from the query.
+   - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
+3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
+4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 6 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
 
 IMPORTANT RULES:
 1. DO NOT use <think> tags or output internal reasoning. 
 2. DO NOT output any conversational text or formatting outside of the JSON block.
 3. If the query is a topic, suggest verified authors associated with that topic.
 4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).
-5. Output MUST be ONLY the raw JSON object matching the following schema. 
-CRITICAL: DO NOT include any preamble, introductory text, markdown formatting (like triple-backtick json), or follow-up comments.
+5. Output MUST be ONLY the raw JSON object matching the following schema. NO PREAMBLE. NO CONVERSATION. START WITH '{' AND END WITH '}'.
+CRITICAL: DO NOT include any introductory text (like "Okay, let's..."), markdown formatting (like triple-backtick json), or follow-up comments.
 {
   "didYouMean": "string or null",
   "suggestions": [
      { "name": "Author Name", "reason": "Why they are relevant" }
   ]
-}`
+}
+START RESPONSE WITH '{' AND NOTHING ELSE.`
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -243,7 +247,7 @@ CRITICAL: DO NOT include any preamble, introductory text, markdown formatting (l
 		},
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
-			MaxTokens: aws.Int32(1000), // Increased to ensure the JSON is not cut off by chatty models
+			MaxTokens: aws.Int32(3000), // Massive buffer to ensure the JSON is not cut off by chatty/thinking models
 			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
 		},
 	}
@@ -270,6 +274,8 @@ CRITICAL: DO NOT include any preamble, introductory text, markdown formatting (l
 			finalContent += text.Value
 		}
 	}
+
+	log.Printf("[AGENT] RAW AI OUTPUT (%s): %s", p.Model, finalContent)
 
 	// Sanitize and Parse
 	finalContent = p.sanitizeJSON(finalContent)

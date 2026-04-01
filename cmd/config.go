@@ -107,6 +107,19 @@ func loadConfig() *serviceConfig {
 		os.Exit(1)
 	}
 
+	if cfg.Solr.Host == "" {
+		cfg.Solr.Host = "http://virgo4-solr-staging-replica-private.internal.lib.virginia.edu:8080"
+	}
+	if cfg.Solr.Core == "" {
+		cfg.Solr.Core = "autocomplete"
+	}
+	if cfg.Solr.Clients.Service.Endpoint == "" {
+		cfg.Solr.Clients.Service.Endpoint = "select"
+	}
+	if cfg.Solr.Clients.HealthCheck.Endpoint == "" {
+		cfg.Solr.Clients.HealthCheck.Endpoint = "admin/ping"
+	}
+
 	if host := os.Getenv(envPrefix + "_SOLR_HOST"); host != "" {
 		cfg.Solr.Host = host
 	}

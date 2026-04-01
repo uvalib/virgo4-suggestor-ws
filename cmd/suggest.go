@@ -190,8 +190,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	var ctxData providers.SuggestionContextData
 	var wg sync.WaitGroup
 
-	// We'll run 2 concurrent requests
-	wg.Add(2)
+	// We'll run 3 concurrent requests (Solr, KB, and Query Dissection)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -203,7 +203,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			Q:          rawQuery,
 			DefType:    baseParams.DefType,
 			Qf:         baseParams.Qf,
-			Rows:       5,
+			Rows:       10,
 		}
 
 		solrRes, err := s.SolrQuery(&solrReq)
@@ -245,13 +245,28 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			return
 		}
 		log.Printf("[ASYNC] Starting KB retrieval")
-		kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 5)
+		kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
 		if err != nil {
 			log.Printf("[ASYNC] KB warning: %s", err.Error())
 			return
 		}
 		ctxData.KBAuthors = kbResults
 		log.Printf("[ASYNC] Finished KB retrieval")
+	}()
+
+	go func() {
+		defer wg.Done()
+		if s.svc.AIProvider == nil {
+			return
+		}
+		log.Printf("[ASYNC] Starting AI Query Dissection")
+		dissected, err := s.svc.AIProvider.DissectQuery(rawQuery)
+		if err != nil {
+			log.Printf("[ASYNC] Dissection warning: %s", err.Error())
+			return
+		}
+		ctxData.Dissected = dissected
+		log.Printf("[ASYNC] Finished AI Query Dissection")
 	}()
 
 
