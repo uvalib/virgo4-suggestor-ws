@@ -169,6 +169,12 @@ Return ONLY valid JSON matching this schema:
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData) (*AIResponse, error) {
 	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
+
+CORE BEHAVIOR:
+1. CANONICAL NAMES: Always return the full, recognized name of the author in "Last, First" format (e.g., "Shakespeare, William").
+2. QUERY ALIGNMENT: Proactively resolve partial names, misspellings, and conceptual associations. If a query is a common noun or surname, prioritize the most globally recognized historical author(s) often associated with it, in addition to any literal catalog matches.
+3. INTELLIGENT COMPLETION: If "Background Research" is empty or contains only niche matches, rely on your extensive internal knowledge of the authorial canon to suggest verified, famous figures. Prioritize quality and relevance over quantity.
+
 IMPORTANT RULES:
 1. DO NOT use <think> tags or output internal reasoning. 
 2. DO NOT output any conversational text or formatting outside of the JSON block.
@@ -243,7 +249,7 @@ CRITICAL: DO NOT include any preamble, introductory text, markdown formatting (l
 	}
 	
 	startTurn := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	resp, err := p.BedrockRuntime.Converse(ctx, input)
 	cancel()
 	durationTurn := time.Since(startTurn)

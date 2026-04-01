@@ -268,8 +268,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	select {
 	case <-done:
 		log.Printf("[ASYNC] Phase 1 completed successfully in %v", time.Since(startWait))
-	case <-time.After(3 * time.Second):
-		log.Printf("[ASYNC] Phase 1 timed out after 3 seconds. Proceeding with partial gathered context.")
+	case <-time.After(10 * time.Second):
+		log.Printf("[ASYNC] Phase 1 timed out after 10 seconds. Proceeding with partial gathered context.")
 	}
 
 	if s.svc.AIProvider != nil {
