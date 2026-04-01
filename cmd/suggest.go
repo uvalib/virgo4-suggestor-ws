@@ -304,7 +304,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		res.Suggestions = append(res.Suggestions, Suggestion{
 			Type:   "author", 
 			Value:  a,
-			Reason: "Verified author from catalog",
+			Reason: "Author's metadata aligns with your query",
 		})
 	}
 
