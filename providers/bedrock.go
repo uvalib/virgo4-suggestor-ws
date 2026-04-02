@@ -166,7 +166,7 @@ Return ONLY valid JSON matching this schema:
 			continue
 		}
 
-		if resp.StopReason == sdktypes.StopReasonGuardrailIntervention {
+		if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
 			log.Printf("[GUARDRAIL] Intervention occurred during DissectQuery (Attempt %d)", attempt)
 			return nil, fmt.Errorf("query dissected was blocked by safety guardrails")
 		}
@@ -302,7 +302,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 			continue
 		}
 
-		if resp.StopReason == sdktypes.StopReasonGuardrailIntervention {
+		if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
 			log.Printf("[GUARDRAIL] Intervention occurred during GetSuggestions (Attempt %d)", attempt)
 			return nil, fmt.Errorf("suggestion generation was blocked by safety guardrails")
 		}
