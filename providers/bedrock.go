@@ -20,16 +20,18 @@ import (
 
 // BedrockProvider contains provider details using official AWS SDK
 type BedrockProvider struct {
-	Region          string
-	Model           string
-	KnowledgeBaseID string
-	Config          aws.Config
-	BedrockRuntime  *bedrockruntime.Client
-	BedrockAgent    *bedrockagentruntime.Client
+	Region           string
+	Model            string
+	KnowledgeBaseID  string
+	GuardrailID      string
+	GuardrailVersion string
+	Config           aws.Config
+	BedrockRuntime   *bedrockruntime.Client
+	BedrockAgent     *bedrockagentruntime.Client
 }
 
 // NewBedrockProvider will instantiate a new AI provider using bedrock SDK
-func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Client) (*BedrockProvider, error) {
+func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string, guardrailVersion string, client *http.Client) (*BedrockProvider, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
@@ -42,12 +44,14 @@ func NewBedrockProvider(model string, knowledgeBaseID string, client *http.Clien
 	}
 
 	return &BedrockProvider{
-		Region:          cfg.Region,
-		Model:           bedrockModel,
-		KnowledgeBaseID: knowledgeBaseID,
-		Config:          cfg,
-		BedrockRuntime:  bedrockruntime.NewFromConfig(cfg),
-		BedrockAgent:    bedrockagentruntime.NewFromConfig(cfg),
+		Region:           cfg.Region,
+		Model:            bedrockModel,
+		KnowledgeBaseID:  knowledgeBaseID,
+		GuardrailID:      guardrailID,
+		GuardrailVersion: guardrailVersion,
+		Config:           cfg,
+		BedrockRuntime:   bedrockruntime.NewFromConfig(cfg),
+		BedrockAgent:     bedrockagentruntime.NewFromConfig(cfg),
 	}, nil
 }
 
@@ -141,6 +145,13 @@ Return ONLY valid JSON matching this schema:
 		Messages: messages,
 	}
 
+	if p.GuardrailID != "" {
+		input.GuardrailConfig = &sdktypes.GuardrailConfiguration{
+			GuardrailIdentifier: aws.String(p.GuardrailID),
+			GuardrailVersion:    aws.String(p.GuardrailVersion),
+		}
+	}
+
 	var dissected DissectedQuery
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -153,6 +164,11 @@ Return ONLY valid JSON matching this schema:
 			lastErr = fmt.Errorf("DissectQuery converse error (attempt %d): %w", attempt, err)
 			log.Printf("[AGENT] %v", lastErr)
 			continue
+		}
+
+		if resp.StopReason == sdktypes.StopReasonGuardrailIntervention {
+			log.Printf("[GUARDRAIL] Intervention occurred during DissectQuery (Attempt %d)", attempt)
+			return nil, fmt.Errorf("query dissected was blocked by safety guardrails")
 		}
 
 		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
@@ -258,9 +274,16 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		},
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
-			MaxTokens: aws.Int32(3000), // Massive buffer to ensure the JSON is not cut off by chatty/thinking models
+			MaxTokens:   aws.Int32(3000), // Massive buffer to ensure the JSON is not cut off by chatty/thinking models
 			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
 		},
+	}
+
+	if p.GuardrailID != "" {
+		input.GuardrailConfig = &sdktypes.GuardrailConfiguration{
+			GuardrailIdentifier: aws.String(p.GuardrailID),
+			GuardrailVersion:    aws.String(p.GuardrailVersion),
+		}
 	}
 	
 	var aiResponse AIResponse
@@ -277,6 +300,11 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 			lastErr = fmt.Errorf("converse error (attempt %d) after %v: %w", attempt, durationTurn, err)
 			log.Printf("[AGENT] %v", lastErr)
 			continue
+		}
+
+		if resp.StopReason == sdktypes.StopReasonGuardrailIntervention {
+			log.Printf("[GUARDRAIL] Intervention occurred during GetSuggestions (Attempt %d)", attempt)
+			return nil, fmt.Errorf("suggestion generation was blocked by safety guardrails")
 		}
 
 		log.Printf("[AGENT] Completed Inference (attempt %d) in %v", attempt, durationTurn)

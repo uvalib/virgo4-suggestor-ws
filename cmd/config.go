@@ -51,11 +51,13 @@ type serviceConfigSolr struct {
 }
 
 type serviceConfigAI struct {
-	Provider        string `json:"provider,omitempty"`
-	Key             string `json:"key,omitempty"`
-	URL             string `json:"url,omitempty"`
-	Model           string `json:"model,omitempty"`
-	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	Key              string `json:"key,omitempty"`
+	URL              string `json:"url,omitempty"`
+	Model            string `json:"model,omitempty"`
+	KnowledgeBaseID  string `json:"knowledge_base_id,omitempty"`
+	GuardrailID      string `json:"guardrail_id,omitempty"`
+	GuardrailVersion string `json:"guardrail_version,omitempty"`
 }
 
 type serviceConfig struct {
@@ -135,6 +137,12 @@ func loadConfig() *serviceConfig {
 	if kbID := os.Getenv(envPrefix + "_BEDROCK_KB_ID"); kbID != "" {
 		cfg.AI.KnowledgeBaseID = kbID
 	}
+	if grID := os.Getenv(envPrefix + "_GUARDRAIL_ID"); grID != "" {
+		cfg.AI.GuardrailID = grID
+	}
+	if grVer := os.Getenv(envPrefix + "_GUARDRAIL_VERSION"); grVer != "" {
+		cfg.AI.GuardrailVersion = grVer
+	}
 
 	// Default AI config if not provided
 	if cfg.AI.Provider == "" {
@@ -146,9 +154,15 @@ func loadConfig() *serviceConfig {
 	if cfg.AI.KnowledgeBaseID == "" {
 		cfg.AI.KnowledgeBaseID = "ANITQDQQXN"
 	}
+	if cfg.AI.GuardrailID == "" {
+		cfg.AI.GuardrailID = "sii0rl6seb24"
+	}
+	if cfg.AI.GuardrailVersion == "" {
+		cfg.AI.GuardrailVersion = "1"
+	}
 
-	log.Printf("[CONFIG] AI config: Provider=%s, Model=%s, KB=%s", 
-		cfg.AI.Provider, cfg.AI.Model, cfg.AI.KnowledgeBaseID)
+	log.Printf("[CONFIG] AI config: Provider=%s, Model=%s, KB=%s, Guardrail=%s:%s", 
+		cfg.AI.Provider, cfg.AI.Model, cfg.AI.KnowledgeBaseID, cfg.AI.GuardrailID, cfg.AI.GuardrailVersion)
 
 	bytes, err := json.Marshal(cfg)
 	if err != nil {
