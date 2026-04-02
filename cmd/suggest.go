@@ -295,16 +295,30 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		} else {
 			log.Printf("[DEBUG-FLOW] Final AI Suggestions: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, time.Since(startRefine))
 			
+			var vwg sync.WaitGroup
+			var mu sync.Mutex
+
+			log.Printf("[VERIFY] Starting async verification for %d candidates...", len(aiRes.Suggestions))
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
-				if trimmedName != "" {
-					res.Suggestions = append(res.Suggestions, Suggestion{
-						Type:   "author",
-						Value:  trimmedName,
-						Reason: sugg.Reason,
-					})
+				if trimmedName == "" {
+					continue
 				}
+
+				vwg.Add(1)
+				go func(cand Suggestion) {
+					defer vwg.Done()
+					// Format as an explicit author search matching client behavior
+					authorQuery := fmt.Sprintf("author: {%s}", cand.Value)
+					if s.verifySuggestionResults(authorQuery) {
+						mu.Lock()
+						res.Suggestions = append(res.Suggestions, cand)
+						mu.Unlock()
+					}
+				}(Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
 			}
+			vwg.Wait()
+			log.Printf("[VERIFY] Completed verification. %d/%d suggestions remained.", len(res.Suggestions), len(aiRes.Suggestions))
 			
 			if len(res.Suggestions) > 0 {
 				return res, nil
@@ -365,35 +379,35 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 
 // verifySuggestionResults checks if a query returns > 0 hits in Solr
 func (s *SuggestionContext) verifySuggestionResults(query string) bool {
-	// Re-use author params as a base but remove specifics?
-	// Or try to execute a broad search.
-	// We'll use the author params for now as that's what we have configured.
 	sugg := s.svc.config.Suggestions.Author
 
 	solrReq := SolrRequest{}
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
-		Rows:    0, // We only care about NumFound
+		Rows:    0, // NumFound is all we need
 		DefType: sugg.Params.DefType,
 		Q:       query,
 		Sort:    sugg.Params.Sort,
 	}
 
-	// Try without Qf first to allow broad search?
-	// Or matches author?
-	// Let's try matching the client behavior which likely just searches.
-	// If we omit Qf, Solr uses default field.
-	// Use the author config Qf (Query Fields) to search in the appropriate fields (e.g. phrase, phonetic)
-	solrReq.json.Params.Qf = sugg.Params.Qf
+	// If the query is an explicit field search (e.g., "author: {...}"), 
+	// don't use the default Qf, as it can override the explicit field mapping in edismax.
+	if !strings.Contains(query, ":") {
+		solrReq.json.Params.Qf = sugg.Params.Qf
+	}
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
-		// Log as warning but Proceed (Fail Open) if we can't verify (e.g. Solr down/unreachable).
-		log.Printf("Verification skipped for '%s' due to error: %s", query, err.Error())
+		log.Printf("[VERIFY] Solr error for '%s': %v (Failing open)", query, err)
 		return true
 	}
 
-	return solrRes.Response.NumFound > 0
+	isValid := solrRes.Response.NumFound > 0
+	if !isValid {
+		log.Printf("[VERIFY] Filtering out '%s' (0 hits found)", query)
+	}
+
+	return isValid
 }
 
 // HandlePingRequest sends a ping request to Solr and checks the response.
