@@ -141,29 +141,40 @@ Return ONLY valid JSON matching this schema:
 		Messages: messages,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	resp, err := p.BedrockRuntime.Converse(ctx, input)
-	cancel()
-	
-	if err != nil {
-		return nil, fmt.Errorf("DissectQuery converse error: %w", err)
-	}
-
-	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-	var finalContent string
-	for _, block := range output.Content {
-		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-			finalContent += text.Value
-		}
-	}
-
-	finalContent = p.sanitizeJSON(finalContent)
 	var dissected DissectedQuery
-	if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
-		return nil, fmt.Errorf("failed to parse DissectQuery response: %w (content: %s)", err, finalContent)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		log.Printf("[AGENT] DissectQuery attempt %d/3...", attempt)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		resp, err := p.BedrockRuntime.Converse(ctx, input)
+		cancel()
+
+		if err != nil {
+			lastErr = fmt.Errorf("DissectQuery converse error (attempt %d): %w", attempt, err)
+			log.Printf("[AGENT] %v", lastErr)
+			continue
+		}
+
+		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+		var finalContent string
+		for _, block := range output.Content {
+			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+				finalContent += text.Value
+			}
+		}
+
+		finalContent = p.sanitizeJSON(finalContent)
+		if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
+			lastErr = fmt.Errorf("failed to parse DissectQuery response (attempt %d): %w (content: %s)", attempt, err, finalContent)
+			log.Printf("[AGENT] %v", lastErr)
+			continue
+		}
+
+		// Success!
+		return &dissected, nil
 	}
 
-	return &dissected, nil
+	return nil, fmt.Errorf("DissectQuery failed after 3 attempts: %w", lastErr)
 }
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
@@ -252,40 +263,48 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		},
 	}
 	
-	startTurn := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	resp, err := p.BedrockRuntime.Converse(ctx, input)
-	cancel()
-	durationTurn := time.Since(startTurn)
-	
-	if err != nil {
-		return nil, fmt.Errorf("converse error after %v: %w", durationTurn, err)
-	}
-	
-	log.Printf("[AGENT] Completed Inference in %v", durationTurn)
-
-	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-	
-	// Final response parsing
 	var aiResponse AIResponse
-	var finalContent string
-	for _, block := range output.Content {
-		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-			finalContent += text.Value
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		log.Printf("[AGENT] GetSuggestions attempt %d/3...", attempt)
+		startTurn := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		resp, err := p.BedrockRuntime.Converse(ctx, input)
+		cancel()
+		durationTurn := time.Since(startTurn)
+
+		if err != nil {
+			lastErr = fmt.Errorf("converse error (attempt %d) after %v: %w", attempt, durationTurn, err)
+			log.Printf("[AGENT] %v", lastErr)
+			continue
 		}
+
+		log.Printf("[AGENT] Completed Inference (attempt %d) in %v", attempt, durationTurn)
+
+		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+		var finalContent string
+		for _, block := range output.Content {
+			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+				finalContent += text.Value
+			}
+		}
+
+		log.Printf("[AGENT] RAW AI OUTPUT (%s, attempt %d): %s", p.Model, attempt, finalContent)
+
+		// Sanitize and Parse
+		finalContent = p.sanitizeJSON(finalContent)
+		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+			lastErr = fmt.Errorf("failed to parse AI response (attempt %d): %w (content: %s)", attempt, err, finalContent)
+			log.Printf("[AGENT] %v", lastErr)
+			continue
+		}
+
+		// Success!
+		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
+		return &aiResponse, nil
 	}
 
-	log.Printf("[AGENT] RAW AI OUTPUT (%s): %s", p.Model, finalContent)
-
-	// Sanitize and Parse
-	finalContent = p.sanitizeJSON(finalContent)
-	if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
-		log.Printf("[AGENT] Final Output (Raw Text after sanitize): %s", finalContent)
-		return nil, fmt.Errorf("failed to parse AI response: %w", err)
-	}
-
-	log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
-	return &aiResponse, nil
+	return nil, fmt.Errorf("GetSuggestions failed after 3 attempts: %w", lastErr)
 }
 
 // safeAppendMessage ensures that messages alternate roles correctly and removes empty content
