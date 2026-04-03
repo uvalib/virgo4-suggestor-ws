@@ -56,8 +56,9 @@ func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string
 		Region:           cfg.Region,
 		Model:            bedrockModel,
 		KnowledgeBaseID:  knowledgeBaseID,
-		GuardrailID:      guardrailID,
-		GuardrailVersion: guardrailVersion,
+		// Guardrails disabled temporarily for debugging (per user request)
+		GuardrailID:      "", 
+		GuardrailVersion: "",
 		Config:           cfg,
 		BedrockRuntime:   bedrockruntime.NewFromConfig(cfg),
 		BedrockAgent:     bedrockagentruntime.NewFromConfig(cfg),
@@ -162,44 +163,29 @@ Return ONLY valid JSON matching this schema:
 	}
 
 	var dissected DissectedQuery
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		log.Printf("[AGENT] DissectQuery attempt %d/3...", attempt)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		resp, err := p.BedrockRuntime.Converse(ctx, input)
-		cancel()
-
-		if err != nil {
-			lastErr = fmt.Errorf("DissectQuery converse error (attempt %d): %w", attempt, err)
-			log.Printf("[AGENT] %v", lastErr)
-			continue
-		}
-
-		if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
-			log.Printf("[GUARDRAIL] Intervention occurred during DissectQuery (Attempt %d)", attempt)
-			return nil, fmt.Errorf("query dissected was blocked by safety guardrails")
-		}
-
-		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-		var finalContent string
-		for _, block := range output.Content {
-			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-				finalContent += text.Value
-			}
-		}
-
-		finalContent = p.sanitizeJSON(finalContent)
-		if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
-			lastErr = fmt.Errorf("failed to parse DissectQuery response (attempt %d): %w (content: %s)", attempt, err, finalContent)
-			log.Printf("[AGENT] %v", lastErr)
-			continue
-		}
-
-		// Success!
-		return &dissected, nil
+	resp, err := p.BedrockRuntime.Converse(context.Background(), input)
+	if err != nil {
+		return nil, fmt.Errorf("DissectQuery converse error: %w", err)
 	}
 
-	return nil, fmt.Errorf("DissectQuery failed after 3 attempts: %w", lastErr)
+	if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
+		return nil, fmt.Errorf("query dissected was blocked by safety guardrails")
+	}
+
+	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+	var finalContent string
+	for _, block := range output.Content {
+		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+			finalContent += text.Value
+		}
+	}
+
+	finalContent = p.sanitizeJSON(finalContent)
+	if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
+		return nil, fmt.Errorf("failed to parse DissectQuery response: %w (content: %s)", err, finalContent)
+	}
+
+	return &dissected, nil
 }
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
@@ -296,52 +282,41 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 	}
 	
 	var aiResponse AIResponse
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		log.Printf("[AGENT] GetSuggestions attempt %d/3...", attempt)
-		startTurn := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		resp, err := p.BedrockRuntime.Converse(ctx, input)
-		cancel()
-		durationTurn := time.Since(startTurn)
+	startTurn := time.Now()
+	// Rely on the SDK's native Retryer (MaxAttempts=5) for 500s and rate limits
+	resp, err := p.BedrockRuntime.Converse(context.Background(), input)
+	durationTurn := time.Since(startTurn)
 
-		if err != nil {
-			lastErr = fmt.Errorf("converse error (attempt %d) after %v: %w", attempt, durationTurn, err)
-			log.Printf("[AGENT] %v", lastErr)
-			continue
-		}
-
-		if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
-			log.Printf("[GUARDRAIL] Intervention occurred during GetSuggestions (Attempt %d)", attempt)
-			return nil, fmt.Errorf("suggestion generation was blocked by safety guardrails")
-		}
-
-		log.Printf("[AGENT] Completed Inference (attempt %d) in %v", attempt, durationTurn)
-
-		output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-		var finalContent string
-		for _, block := range output.Content {
-			if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-				finalContent += text.Value
-			}
-		}
-
-		log.Printf("[AGENT] RAW AI OUTPUT (%s, attempt %d): %s", p.Model, attempt, finalContent)
-
-		// Sanitize and Parse
-		finalContent = p.sanitizeJSON(finalContent)
-		if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
-			lastErr = fmt.Errorf("failed to parse AI response (attempt %d): %w (content: %s)", attempt, err, finalContent)
-			log.Printf("[AGENT] %v", lastErr)
-			continue
-		}
-
-		// Success!
-		log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
-		return &aiResponse, nil
+	if err != nil {
+		return nil, fmt.Errorf("converse error after %v: %w", durationTurn, err)
 	}
 
-	return nil, fmt.Errorf("GetSuggestions failed after 3 attempts: %w", lastErr)
+	if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
+		log.Printf("[GUARDRAIL] Intervention occurred during GetSuggestions")
+		return nil, fmt.Errorf("suggestion generation was blocked by safety guardrails")
+	}
+
+	log.Printf("[AGENT] Completed Inference in %v", durationTurn)
+
+	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+	var finalContent string
+	for _, block := range output.Content {
+		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+			finalContent += text.Value
+		}
+	}
+
+	log.Printf("[AGENT] RAW AI OUTPUT (%s): %s", p.Model, finalContent)
+
+	// Sanitize and Parse
+	finalContent = p.sanitizeJSON(finalContent)
+	if err := json.Unmarshal([]byte(finalContent), &aiResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response: %w (content: %s)", err, finalContent)
+	}
+
+	// Success!
+	log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
+	return &aiResponse, nil
 }
 
 // safeAppendMessage ensures that messages alternate roles correctly and removes empty content
@@ -445,21 +420,25 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 		input = input[lastThink+len("</think>"):]
 	}
 
-	// 1. Extract JSON part from markdown or surrounding text
+	// 1. Find the first '{' and last '}' to extract the core JSON object.
+	// This helps with models (like Gemma 3) that wrap output in markdown blocks (```json ... ```)
 	startIdx := strings.Index(input, "{")
 	if startIdx > -1 {
 		endIdx := strings.LastIndex(input, "}")
 		if endIdx > startIdx {
 			input = input[startIdx : endIdx+1]
 		} else {
-			// If we found a '{' but no closing '}', it's definitely invalid
-			// or truncated. Let's still trim leading and return.
 			input = input[startIdx:]
 		}
 	} else {
-		// If no '{' is found at all, the AI response contains no JSON.
-		// Return empty JSON object to prevent unmarshal errors and allow caller to handle.
-		return "{}"
+		// No JSON found — check if it's a markdown-wrapped single block without braces (rare but possible)
+		if strings.Contains(input, "```") {
+			input = strings.TrimPrefix(input, "```json")
+			input = strings.TrimPrefix(input, "```")
+			input = strings.TrimSuffix(input, "```")
+		} else {
+			return "{}"
+		}
 	}
 
 	// 2. Replace smart/curly quotes with standard ASCII equivalents
