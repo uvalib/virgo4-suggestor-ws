@@ -345,9 +345,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	return res, nil
 }
 
-	return res, nil
-}
-
 // GetAuthorResourceCounts retrieves document counts for a list of authors from Solr
 func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[string]int, error) {
 	counts := make(map[string]int)
