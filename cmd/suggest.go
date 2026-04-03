@@ -308,9 +308,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				vwg.Add(1)
 				go func(cand Suggestion) {
 					defer vwg.Done()
-					// Format as an explicit author search matching client behavior
-					authorQuery := fmt.Sprintf("author: {%s}", cand.Value)
-					if s.verifySuggestionResults(authorQuery) {
+					if s.verifySuggestionResults(cand.Value, cand.Type) {
 						mu.Lock()
 						res.Suggestions = append(res.Suggestions, cand)
 						mu.Unlock()
@@ -377,34 +375,37 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 	return counts, nil
 }
 
-// verifySuggestionResults checks if a query returns > 0 hits in Solr
-func (s *SuggestionContext) verifySuggestionResults(query string) bool {
+// verifySuggestionResults checks if a suggested name exists in the autocomplete core with hits
+func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) bool {
 	sugg := s.svc.config.Suggestions.Author
 
 	solrReq := SolrRequest{}
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
 		Rows:    0, // NumFound is all we need
-		DefType: sugg.Params.DefType,
-		Q:       query,
+		DefType: "lucene", // Use standard lucene for exact phrase matching
+		Q:       fmt.Sprintf("phrase:\"%s\"", strings.ReplaceAll(value, "\"", "\\\"")),
 		Sort:    sugg.Params.Sort,
+		Fq:      sugg.Params.Fq, // Include mandatory filters like type:author and count:[2 TO *]
 	}
 
-	// If the query is an explicit field search (e.g., "author: {...}"), 
-	// don't use the default Qf, as it can override the explicit field mapping in edismax.
-	if !strings.Contains(query, ":") {
-		solrReq.json.Params.Qf = sugg.Params.Qf
+	// If no filters were provided in config, ensure we at least match the type
+	if len(solrReq.json.Params.Fq) == 0 {
+		solrReq.json.Params.Fq = []string{fmt.Sprintf("type:%s", suggType)}
 	}
 
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
-		log.Printf("[VERIFY] Solr error for '%s': %v (Failing open)", query, err)
-		return true
+		// Log error but fail CLOSED -- we don't want to show suggestions we can't verify
+		log.Printf("[VERIFY] Solr error for '%s %s': %v (Failing closed)", suggType, value, err)
+		return false
 	}
 
 	isValid := solrRes.Response.NumFound > 0
 	if !isValid {
-		log.Printf("[VERIFY] Filtering out '%s' (0 hits found)", query)
+		log.Printf("[VERIFY] Filtering out '%s %s' (0 hits found in autocomplete)", suggType, value)
+	} else {
+		log.Printf("[VERIFY] Verified '%s %s' (%d hits found in autocomplete)", suggType, value, solrRes.Response.NumFound)
 	}
 
 	return isValid
