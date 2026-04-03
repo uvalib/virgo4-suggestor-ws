@@ -308,8 +308,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				vwg.Add(1)
 				go func(cand Suggestion) {
 					defer vwg.Done()
-					if s.verifySuggestionResults(cand.Value, cand.Type) {
+					if canonical, ok := s.verifySuggestionResults(cand.Value, cand.Type); ok {
 						mu.Lock()
+						cand.Value = canonical // Replace AI's name with exact catalog string
 						res.Suggestions = append(res.Suggestions, cand)
 						mu.Unlock()
 					}
@@ -376,15 +377,18 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 }
 
 // verifySuggestionResults checks if a suggested name exists in the autocomplete core with hits
-func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) bool {
+// and returns the CANONICAL name (e.g., "Gide, Andre") if found.
+func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) (string, bool) {
 	sugg := s.svc.config.Suggestions.Author
 
 	solrReq := SolrRequest{}
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
-		Rows:    0, // NumFound is all we need
-		DefType: "lucene", // Use standard lucene for exact phrase matching
-		Q:       fmt.Sprintf("phrase:\"%s\"", strings.ReplaceAll(value, "\"", "\\\"")),
+		Rows:    1, // We only need the top canonical match
+		DefType: sugg.Params.DefType,
+		Q:       value,
+		Qf:      sugg.Params.Qf,
+		Fl:      []string{"phrase", "count"},
 		Sort:    sugg.Params.Sort,
 		Fq:      sugg.Params.Fq, // Include mandatory filters like type:author and count:[2 TO *]
 	}
@@ -398,17 +402,17 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	if err != nil {
 		// Log error but fail CLOSED -- we don't want to show suggestions we can't verify
 		log.Printf("[VERIFY] Solr error for '%s %s': %v (Failing closed)", suggType, value, err)
-		return false
+		return "", false
 	}
 
-	isValid := solrRes.Response.NumFound > 0
-	if !isValid {
-		log.Printf("[VERIFY] Filtering out '%s %s' (0 hits found in autocomplete)", suggType, value)
-	} else {
-		log.Printf("[VERIFY] Verified '%s %s' (%d hits found in autocomplete)", suggType, value, solrRes.Response.NumFound)
+	if solrRes.Response.NumFound > 0 && len(solrRes.Response.Docs) > 0 {
+		canonical := solrRes.Response.Docs[0].Phrase
+		log.Printf("[VERIFY] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, solrRes.Response.Docs[0].Count)
+		return canonical, true
 	}
 
-	return isValid
+	log.Printf("[VERIFY] Rejecting '%s %s' (No canonical name found in autocomplete)", suggType, value)
+	return "", false
 }
 
 // HandlePingRequest sends a ping request to Solr and checks the response.
