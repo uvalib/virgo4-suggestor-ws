@@ -188,6 +188,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	var ctxData providers.SuggestionContextData
+	var wg sync.WaitGroup
 	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
 	// so slow backends don't hold up the entire suggestion request.
 	startCycle1 := time.Now()
