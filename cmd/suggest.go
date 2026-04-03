@@ -395,6 +395,7 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		DefType: sugg.Params.DefType,
 		Q:       value,
 		Qf:      sugg.Params.Qf,
+		Mm:      "100%", // Require all words from AI to be present in Solr doc
 		Fl:      []string{"phrase", "count"},
 		Sort:    sugg.Params.Sort,
 		Fq:      sugg.Params.Fq, // Include mandatory filters like type:author and count:[2 TO *]
@@ -408,18 +409,51 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	solrRes, err := s.SolrQuery(&solrReq)
 	if err != nil {
 		// Log error but fail CLOSED -- we don't want to show suggestions we can't verify
-		log.Printf("[VERIFY] Solr error for '%s %s': %v (Failing closed)", suggType, value, err)
+		log.Printf("[CYCLE-3] Solr error for '%s %s': %v (Failing closed)", suggType, value, err)
 		return "", false
 	}
 
 	if solrRes.Response.NumFound > 0 && len(solrRes.Response.Docs) > 0 {
 		canonical := solrRes.Response.Docs[0].Phrase
-		log.Printf("[VERIFY] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, solrRes.Response.Docs[0].Count)
-		return canonical, true
+		
+		// Guard against overly loose 'repairs' by checking word overlap
+		if isSimilar(value, canonical) {
+			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, solrRes.Response.Docs[0].Count)
+			return canonical, true
+		}
+		log.Printf("[CYCLE-3] Rejecting '%s %s' -> '%s' (Similarity too low)", suggType, value, canonical)
+		return "", false
 	}
 
-	log.Printf("[VERIFY] Rejecting '%s %s' (No canonical name found in autocomplete)", suggType, value)
+	log.Printf("[CYCLE-3] Rejecting '%s %s' (No canonical name found with 100%% word match)", suggType, value)
 	return "", false
+}
+
+// isSimilar performs a basic similarity check between original and canonical names.
+// It ensures that we don't 'repair' a name into something completely unrelated.
+func isSimilar(orig, canon string) bool {
+	oWords := strings.Fields(strings.ToLower(orig))
+	cWords := strings.Fields(strings.ReplaceAll(strings.ToLower(canon), ",", ""))
+
+	if len(oWords) == 0 || len(cWords) == 0 {
+		return false
+	}
+
+	// Basic check: see how many words from original are in canonical
+	matches := 0
+	for _, ow := range oWords {
+		for _, cw := range cWords {
+			if ow == cw {
+				matches++
+				break
+			}
+		}
+	}
+
+	// For author names, we expect high overlap regardless of 'First Last' vs 'Last, First' order.
+	// Aim for at least 70% of original words found in canonical.
+	threshold := float64(len(oWords)) * 0.70
+	return float64(matches) >= threshold
 }
 
 // HandlePingRequest sends a ping request to Solr and checks the response.

@@ -18,6 +18,7 @@ type SolrRequestParams struct {
 	Rows       int      `json:"rows"`
 	Fl         []string `json:"fl,omitempty"`
 	Fq         []string `json:"fq,omitempty"`
+	Mm         string   `json:"mm,omitempty"`
 	Q          string   `json:"q,omitempty"`
 	Qf         string   `json:"qf,omitempty"`
 	Sort       string   `json:"sort,omitempty"`
