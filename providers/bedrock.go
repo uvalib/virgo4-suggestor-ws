@@ -33,8 +33,8 @@ type BedrockProvider struct {
 
 // NewBedrockProvider will instantiate a new AI provider using bedrock SDK
 func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string, guardrailVersion string, client *http.Client) (*BedrockProvider, error) {
-	// Restore Gemma 3-4b as the primary model.
-	bedrockModel := "google.gemma-3-4b-it"
+	// Restore Kimi K2.5 as the primary model.
+	bedrockModel := "moonshotai.kimi-k2.5"
 	if model != "" {
 		bedrockModel = model
 	}
@@ -241,7 +241,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		}
 		sb.WriteString("=========================================\n\n")
 
-		sb.WriteString("INSTRUCTION: Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output ONLY the raw JSON object. NO markdown formatting. NO comments.\n")
+		sb.WriteString("INSTRUCTION: Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
@@ -249,8 +249,8 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
 	log.Printf("[AGENT] Start session: query='%s'", query)
-	log.Printf("[AGENT] System Prompt: %s", systemPrompt)
-	log.Printf("[AGENT] User Prompt: %s", userPrompt)
+	// log.Printf("[AGENT] System Prompt: %s", systemPrompt)
+	// log.Printf("[AGENT] User Prompt: %s", userPrompt)
 
 	messages := []sdktypes.Message{
 		{
@@ -269,7 +269,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		},
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
-			MaxTokens:   aws.Int32(1024), // Reduced from 3000 to maximize stability for gemma-3-4b
+			MaxTokens:   aws.Int32(3072), // Large buffer to ensure JSON is not cut off by chatty/thinking models
 			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
 		},
 	}
