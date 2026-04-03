@@ -287,6 +287,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		log.Printf("[ASYNC] Phase 1 timed out after 10 seconds. Proceeding with partial gathered context.")
 	}
 
+	var candidates []Suggestion
 	if s.svc.AIProvider != nil {
 		startRefine := time.Now()
 		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData)
@@ -294,46 +295,50 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			log.Printf("ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startRefine))
 		} else {
 			log.Printf("[DEBUG-FLOW] Final AI Suggestions: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, time.Since(startRefine))
-			
-			var vwg sync.WaitGroup
-			var mu sync.Mutex
-
-			log.Printf("[VERIFY] Starting async verification for %d candidates...", len(aiRes.Suggestions))
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
-				if trimmedName == "" {
-					continue
+				if trimmedName != "" {
+					candidates = append(candidates, Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
 				}
-
-				vwg.Add(1)
-				go func(cand Suggestion) {
-					defer vwg.Done()
-					if canonical, ok := s.verifySuggestionResults(cand.Value, cand.Type); ok {
-						mu.Lock()
-						cand.Value = canonical // Replace AI's name with exact catalog string
-						res.Suggestions = append(res.Suggestions, cand)
-						mu.Unlock()
-					}
-				}(Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
 			}
-			vwg.Wait()
-			log.Printf("[VERIFY] Completed verification. %d/%d suggestions remained.", len(res.Suggestions), len(aiRes.Suggestions))
-			
-			if len(res.Suggestions) > 0 {
-				return res, nil
-			}
-			log.Printf("WARNING: AI refinement produced 0 valid suggestions. Returning empty.")
 		}
 	}
 	
-	// If AI fails/missing, return what we found in KB or Solr exactly if any.
-	// But mostly we expect AI to handle this.
-	for _, a := range ctxData.KBAuthors {
-		res.Suggestions = append(res.Suggestions, Suggestion{
-			Type:   "author", 
-			Value:  a,
-			Reason: "Author's metadata aligns with your query",
-		})
+	// If AI failed or provided no results, fall back to Knowledge Base candidates
+	if len(candidates) == 0 {
+		log.Printf("[VERIFY] No AI suggestions found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
+		for _, a := range ctxData.KBAuthors {
+			candidates = append(candidates, Suggestion{
+				Type:   "author", 
+				Value:  a,
+				Reason: "Author's metadata aligns with your query",
+			})
+		}
+	}
+
+	if len(candidates) > 0 {
+		var vwg sync.WaitGroup
+		var mu sync.Mutex
+		seen := make(map[string]bool)
+
+		log.Printf("[VERIFY] Starting parallel verification for %d candidates...", len(candidates))
+		for _, cand := range candidates {
+			vwg.Add(1)
+			go func(c Suggestion) {
+				defer vwg.Done()
+				if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
+					mu.Lock()
+					defer mu.Unlock()
+					if !seen[canonical] {
+						seen[canonical] = true
+						c.Value = canonical // Replace candidate with exact catalog string
+						res.Suggestions = append(res.Suggestions, c)
+					}
+				}
+			}(cand)
+		}
+		vwg.Wait()
+		log.Printf("[VERIFY] Completed parallel verification. %d suggestions remained.", len(res.Suggestions))
 	}
 
 	return res, nil
