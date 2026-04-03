@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentruntime/types"
@@ -32,15 +33,23 @@ type BedrockProvider struct {
 
 // NewBedrockProvider will instantiate a new AI provider using bedrock SDK
 func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string, guardrailVersion string, client *http.Client) (*BedrockProvider, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
-	}
-
-	// Final stabilized model choice for deployment
+	// Restore Gemma 3-4b as the primary model.
 	bedrockModel := "google.gemma-3-4b-it"
 	if model != "" {
 		bedrockModel = model
+	}
+
+	// Reconfigure the AWS SDK with an increased retry count (5 attempts)
+	// and a standard retryer to mitigate transient 500 errors and rate-limiting.
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 5
+			})
+		}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to load aws sdk config: %s", err.Error())
 	}
 
 	return &BedrockProvider{
@@ -274,7 +283,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		},
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
-			MaxTokens:   aws.Int32(3000), // Massive buffer to ensure the JSON is not cut off by chatty/thinking models
+			MaxTokens:   aws.Int32(1024), // Reduced from 3000 to maximize stability for gemma-3-4b
 			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
 		},
 	}
