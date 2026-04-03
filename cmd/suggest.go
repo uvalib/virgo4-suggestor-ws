@@ -432,8 +432,15 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 // isSimilar performs a basic similarity check between original and canonical names.
 // It ensures that we don't 'repair' a name into something completely unrelated.
 func isSimilar(orig, canon string) bool {
-	oWords := strings.Fields(strings.ToLower(orig))
-	cWords := strings.Fields(strings.ReplaceAll(strings.ToLower(canon), ",", ""))
+	clean := func(s string) []string {
+		// Remove commas and periods (for initials) then lowercase and split
+		s = strings.ReplaceAll(s, ",", " ")
+		s = strings.ReplaceAll(s, ".", " ")
+		return strings.Fields(strings.ToLower(s))
+	}
+
+	oWords := clean(orig)
+	cWords := clean(canon)
 
 	if len(oWords) == 0 || len(cWords) == 0 {
 		return false
