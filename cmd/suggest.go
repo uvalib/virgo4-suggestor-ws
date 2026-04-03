@@ -188,14 +188,17 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	var ctxData providers.SuggestionContextData
-	var wg sync.WaitGroup
-
+	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
+	// so slow backends don't hold up the entire suggestion request.
+	startCycle1 := time.Now()
+	
 	// We'll run 3 concurrent requests (Solr, KB, and Query Dissection)
 	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
-		log.Printf("[ASYNC] Starting Solr context query")
+		start := time.Now()
+		log.Printf("[CYCLE-1] Starting Solr context query")
 		
 		baseParams := s.svc.config.Suggestions.Author.Params
 		solrReq := SolrRequest{}
@@ -208,7 +211,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 		solrRes, err := s.SolrQuery(&solrReq)
 		if err != nil {
-			log.Printf("[ASYNC] Solr warning: %s", err.Error())
+			log.Printf("[CYCLE-1] Solr warning: %s (took %v)", err.Error(), time.Since(start))
 			return
 		}
 
@@ -236,7 +239,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				}
 			}
 		}
-		log.Printf("[ASYNC] Finished Solr context query")
+		log.Printf("[CYCLE-1] Finished Solr context query (took %v)", time.Since(start))
 	}()
 
 	go func() {
@@ -244,14 +247,15 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		if s.svc.AIProvider == nil {
 			return
 		}
-		log.Printf("[ASYNC] Starting KB retrieval")
+		start := time.Now()
+		log.Printf("[CYCLE-1] Starting KB retrieval")
 		kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
 		if err != nil {
-			log.Printf("[ASYNC] KB warning: %s", err.Error())
+			log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
 			return
 		}
 		ctxData.KBAuthors = kbResults
-		log.Printf("[ASYNC] Finished KB retrieval")
+		log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
 	}()
 
 	go func() {
@@ -259,21 +263,17 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		if s.svc.AIProvider == nil {
 			return
 		}
-		log.Printf("[ASYNC] Starting AI Query Dissection")
+		start := time.Now()
+		log.Printf("[CYCLE-1] Starting AI Query Dissection")
 		dissected, err := s.svc.AIProvider.DissectQuery(rawQuery)
 		if err != nil {
-			log.Printf("[ASYNC] Dissection warning: %s", err.Error())
+			log.Printf("[CYCLE-1] Dissection warning: %s (took %v)", err.Error(), time.Since(start))
 			return
 		}
 		ctxData.Dissected = dissected
-		log.Printf("[ASYNC] Finished AI Query Dissection")
+		log.Printf("[CYCLE-1] Finished AI Query Dissection (took %v)", time.Since(start))
 	}()
 
-
-
-	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
-	// so slow backends don't hold up the entire suggestion request.
-	startWait := time.Now()
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -282,19 +282,19 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	select {
 	case <-done:
-		log.Printf("[ASYNC] Phase 1 completed successfully in %v", time.Since(startWait))
+		log.Printf("[CYCLE-1] Total context gathering completed in %v", time.Since(startCycle1))
 	case <-time.After(10 * time.Second):
-		log.Printf("[ASYNC] Phase 1 timed out after 10 seconds. Proceeding with partial gathered context.")
+		log.Printf("[CYCLE-1] TIMEOUT! Context gathering halted after 10s. Proceeding with partial context (took %v)", time.Since(startCycle1))
 	}
 
 	var candidates []Suggestion
 	if s.svc.AIProvider != nil {
-		startRefine := time.Now()
+		startCycle2 := time.Now()
 		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData)
 		if err != nil {
-			log.Printf("ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startRefine))
+			log.Printf("[CYCLE-2] ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startCycle2))
 		} else {
-			log.Printf("[DEBUG-FLOW] Final AI Suggestions: didYouMean='%s', suggestions=%v (took %v)", aiRes.DidYouMean, aiRes.Suggestions, time.Since(startRefine))
+			log.Printf("[CYCLE-2] AI suggestions produced: count=%d (took %v)", len(aiRes.Suggestions), time.Since(startCycle2))
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
 				if trimmedName != "" {
@@ -306,7 +306,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	
 	// If AI failed or provided no results, fall back to Knowledge Base candidates
 	if len(candidates) == 0 {
-		log.Printf("[VERIFY] No AI suggestions found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
+		log.Printf("[CYCLE-2] No AI candidates found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
 		for _, a := range ctxData.KBAuthors {
 			candidates = append(candidates, Suggestion{
 				Type:   "author", 
@@ -317,11 +317,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if len(candidates) > 0 {
+		startCycle3 := time.Now()
 		var vwg sync.WaitGroup
 		var mu sync.Mutex
 		seen := make(map[string]bool)
 
-		log.Printf("[VERIFY] Starting parallel verification for %d candidates...", len(candidates))
+		log.Printf("[CYCLE-3] Starting parallel verification for %d candidates...", len(candidates))
 		for _, cand := range candidates {
 			vwg.Add(1)
 			go func(c Suggestion) {
@@ -338,8 +339,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}(cand)
 		}
 		vwg.Wait()
-		log.Printf("[VERIFY] Completed parallel verification. %d suggestions remained.", len(res.Suggestions))
+		log.Printf("[CYCLE-3] Completed parallel verification. %d valid suggestions remained (total took %v).", len(res.Suggestions), time.Since(startCycle3))
 	}
+
+	return res, nil
+}
 
 	return res, nil
 }
