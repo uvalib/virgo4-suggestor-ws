@@ -41,6 +41,7 @@ type SuggestionRequest struct {
 
 // SuggestionResponse contains the full set of suggestions
 type SuggestionResponse struct {
+	DidYouMean  string       `json:"did_you_mean,omitempty"`
 	Suggestions []Suggestion `json:"suggestions"`
 }
 
@@ -302,6 +303,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					candidates = append(candidates, Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
 				}
 			}
+			res.DidYouMean = aiRes.DidYouMean
 		}
 	}
 	
