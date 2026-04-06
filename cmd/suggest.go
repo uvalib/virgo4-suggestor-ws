@@ -365,6 +365,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}(cand)
 		}
 		vwg.Wait()
+		
+		// Cap final suggestions at 8 as requested by the user
+		if len(res.Suggestions) > 8 {
+			res.Suggestions = res.Suggestions[:8]
+		}
 	}
 
 	if s.req.Debug {

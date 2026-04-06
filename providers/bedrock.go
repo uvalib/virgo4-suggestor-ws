@@ -150,11 +150,11 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
 
 CORE BEHAVIOR:
 1. CANONICAL NAMES: Always return the full, recognized name of the primary author in "Last, First" format (e.g., "Shakespeare, William").
-2. DIVERSITY & MIXTURE: Provide a diverse list of 6-10 suggestions. This MUST include:
+2. DIVERSITY & MIXTURE: Provide a diverse list of up to 20 suggestions. This MUST include:
    - The primary canonical author(s) mapped from the query.
    - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
 3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
-4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 6 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.%s
+4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.%s
 
 IMPORTANT RULES:
 1. DO NOT use <think> tags or output internal reasoning. 
@@ -190,7 +190,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		}
 		sb.WriteString("=========================================\n\n")
 
-		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
+		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide up to 20 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
