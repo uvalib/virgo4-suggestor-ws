@@ -37,12 +37,24 @@ type Suggestion struct {
 type SuggestionRequest struct {
 	Query    string `json:"query"`
 	AIPrompt string `json:"aiPrompt"`
+	Debug    bool   `json:"debug"`
 }
 
 // SuggestionResponse contains the full set of suggestions
 type SuggestionResponse struct {
-	DidYouMean  string       `json:"did_you_mean,omitempty"`
-	Suggestions []Suggestion `json:"suggestions"`
+	DidYouMean  string              `json:"did_you_mean,omitempty"`
+	Suggestions []Suggestion        `json:"suggestions"`
+	Metadata    *SuggestionMetadata `json:"metadata,omitempty"`
+}
+
+// SuggestionMetadata contains timing and token usage for the suggestion process
+type SuggestionMetadata struct {
+	TotalTimeMS  int64 `json:"total_time_ms"`
+	Cycle1TimeMS int64 `json:"cycle1_time_ms"`
+	Cycle2TimeMS int64 `json:"cycle2_time_ms"`
+	Cycle3TimeMS int64 `json:"cycle3_time_ms"`
+	InputTokens  int   `json:"input_tokens"`
+	OutputTokens int   `json:"output_tokens"`
 }
 
 func boolOptionWithFallback(opt string, fallback bool) bool {
@@ -174,7 +186,13 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 // HandleSuggestionRequest takes a keyword query and tries to find suggested searches
 // based on it using a parallel Context Gathering approach.
 func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
+	var fullStart time.Time
+	if s.req.Debug {
+		fullStart = time.Now()
+	}
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
+
+	var cycle1Time, cycle2Time int64
 
 	// Ensure query is parsed (though we might use the raw query for the LLM)
 	if err := s.ParseQuery(); err != nil {
@@ -192,7 +210,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	var wg sync.WaitGroup
 	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
 	// so slow backends don't hold up the entire suggestion request.
-	startCycle1 := time.Now()
+	var startCycle1 time.Time
+	if s.req.Debug {
+		startCycle1 = time.Now()
+	}
 	
 	// We'll run 3 concurrent requests (Solr, KB, and Query Dissection)
 	wg.Add(3)
@@ -284,15 +305,23 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	select {
 	case <-done:
-		log.Printf("[CYCLE-1] Total context gathering completed in %v", time.Since(startCycle1))
+		// Use raw time.Since(startCycle1) for log messages, that's harmless
 	case <-time.After(10 * time.Second):
-		log.Printf("[CYCLE-1] TIMEOUT! Context gathering halted after 10s. Proceeding with partial context (took %v)", time.Since(startCycle1))
+		log.Printf("[CYCLE-1] TIMEOUT! Context gathering halted after 10s. Proceeding with partial context")
+	}
+	
+	if s.req.Debug {
+		cycle1Time = time.Since(startCycle1).Milliseconds()
 	}
 
 	var candidates []Suggestion
+	var aiUsage providers.AIUsage
 	if s.svc.AIProvider != nil {
-		startCycle2 := time.Now()
-		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData)
+		var startCycle2 time.Time
+		if s.req.Debug {
+			startCycle2 = time.Now()
+		}
+		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
 		if err != nil {
 			log.Printf("[CYCLE-2] ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startCycle2))
 		} else {
@@ -304,6 +333,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				}
 			}
 			res.DidYouMean = aiRes.DidYouMean
+			aiUsage = aiRes.Usage
+		}
+		if s.req.Debug {
+			cycle2Time = time.Since(startCycle2).Milliseconds()
 		}
 	}
 	
@@ -320,7 +353,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if len(candidates) > 0 {
-		startCycle3 := time.Now()
+		var startCycle3 time.Time
+		if s.req.Debug {
+			startCycle3 = time.Now()
+		}
 		var vwg sync.WaitGroup
 		var mu sync.Mutex
 		seen := make(map[string]bool)
@@ -342,7 +378,18 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}(cand)
 		}
 		vwg.Wait()
-		log.Printf("[CYCLE-3] Completed parallel verification. %d valid suggestions remained (total took %v).", len(res.Suggestions), time.Since(startCycle3))
+		log.Printf("[CYCLE-3] Completed parallel verification for %d candidates.", len(res.Suggestions))
+
+		if s.req.Debug {
+			res.Metadata = &SuggestionMetadata{
+				TotalTimeMS:  time.Since(fullStart).Milliseconds(),
+				Cycle1TimeMS: cycle1Time,
+				Cycle2TimeMS: cycle2Time,
+				Cycle3TimeMS: time.Since(startCycle3).Milliseconds(),
+				InputTokens:  aiUsage.InputTokens,
+				OutputTokens: aiUsage.OutputTokens,
+			}
+		}
 	}
 
 	return res, nil

@@ -189,7 +189,7 @@ Return ONLY valid JSON matching this schema:
 }
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
-func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData) (*AIResponse, error) {
+func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool) (*AIResponse, error) {
 	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
 
 CORE BEHAVIOR:
@@ -315,6 +315,14 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 	}
 
 	// Success!
+	if debug && resp.Usage != nil {
+		aiResponse.Usage = AIUsage{
+			InputTokens:  int(*resp.Usage.InputTokens),
+			OutputTokens: int(*resp.Usage.OutputTokens),
+			TotalTokens:  int(*resp.Usage.TotalTokens),
+		}
+	}
+
 	log.Printf("[AGENT] Final result: didYouMean='%s', suggestions count=%d", aiResponse.DidYouMean, len(aiResponse.Suggestions))
 	return &aiResponse, nil
 }

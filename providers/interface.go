@@ -4,6 +4,14 @@ package providers
 type AIResponse struct {
 	DidYouMean  string                 `json:"didYouMean"`
 	Suggestions []AIResponseSuggestion `json:"suggestions"`
+	Usage       AIUsage                `json:"usage,omitempty"`
+}
+
+// AIUsage captures token metrics from the provider
+type AIUsage struct {
+	InputTokens  int `json:"inputTokens"`
+	OutputTokens int `json:"outputTokens"`
+	TotalTokens  int `json:"totalTokens"`
 }
 
 // AIResponseSuggestion contains an individual suggestion and its reason
@@ -34,7 +42,7 @@ type AIProvider interface {
 	DissectQuery(query string) (*DissectedQuery, error)
 
 	// GetSuggestions generates search suggestions based on the user query and gathered context
-	GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData) (*AIResponse, error)
+	GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool) (*AIResponse, error)
 
 	// Name returns the name of the provider (e.g. "gemini", "openai")
 	Name() string
