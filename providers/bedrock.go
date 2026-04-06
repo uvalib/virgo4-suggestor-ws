@@ -177,20 +177,11 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("USER QUERY: \"%s\"\n\n", query))
 		
-		sb.WriteString("=== BACKGROUND RESEARCH FROM CATALOG ===\n")
-		if len(suggContext.SolrTitles) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog item titles: %s\n", p.quoteList(suggContext.SolrTitles)))
-		}
-		if len(suggContext.SolrSubjectFacet) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog subjects: %s\n", p.quoteList(suggContext.SolrSubjectFacet)))
-		}
-		if len(suggContext.SolrAuthorFacet) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog authors: %s\n", p.quoteList(suggContext.SolrAuthorFacet)))
-		}
+		sb.WriteString("=== BACKGROUND RESEARCH ===\n")
 		if len(suggContext.KBAuthors) > 0 {
 			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %s\n", p.quoteList(suggContext.KBAuthors)))
 		}
-		sb.WriteString("=========================================\n\n")
+		sb.WriteString("===========================\n\n")
 
 		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide up to 20 relevant AUTHOR names in 'suggestions' in descending order of confidence, prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()

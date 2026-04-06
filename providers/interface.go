@@ -25,10 +25,7 @@ type AIResponseSuggestion struct {
 
 // SuggestionContextData holds the gathered research from Solr and KB
 type SuggestionContextData struct {
-	SolrTitles       []string
-	SolrSubjectFacet []string
-	SolrAuthorFacet  []string
-	KBAuthors        []string
+	KBAuthors []string
 }
 
 // AIProvider defines the interface for different AI backends

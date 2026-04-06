@@ -221,59 +221,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		startCycle1 = time.Now()
 	}
 	
-	// We'll run 2 concurrent requests (Solr and KB)
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		start := time.Now()
-		log.Printf("[CYCLE-1] Starting Solr context query")
-		
-		baseParams := s.svc.config.Suggestions.Author.Params
-		solrReq := SolrRequest{}
-		solrReq.json.Params = SolrRequestParams{
-			Q:          rawQuery,
-			DefType:    baseParams.DefType,
-			Qf:         baseParams.Qf,
-			Rows:       10,
-			Facet:      true,
-			FacetField: []string{"subject_facet", "author_facet"},
-			FacetLimit: 10,
-			FacetMin:   1,
-		}
-
-		solrRes, err := s.SolrQuery(&solrReq)
-		if err != nil {
-			log.Printf("[CYCLE-1] Solr warning: %s (took %v)", err.Error(), time.Since(start))
-			return
-		}
-
-		// Extract Titles
-		for _, doc := range solrRes.Response.Docs {
-			if len(doc.Title) > 0 {
-				ctxData.SolrTitles = append(ctxData.SolrTitles, doc.Title[0])
-			}
-		}
-
-		// Extract Facets safely
-		if solrRes.FacetCounts.FacetFields != nil {
-			if subjects, ok := solrRes.FacetCounts.FacetFields["subject_facet"]; ok {
-				for i := 0; i < len(subjects); i += 2 {
-					if subjStr, ok := subjects[i].(string); ok {
-						ctxData.SolrSubjectFacet = append(ctxData.SolrSubjectFacet, subjStr)
-					}
-				}
-			}
-			if authors, ok := solrRes.FacetCounts.FacetFields["author_facet"]; ok {
-				for i := 0; i < len(authors); i += 2 {
-					if authStr, ok := authors[i].(string); ok {
-						ctxData.SolrAuthorFacet = append(ctxData.SolrAuthorFacet, authStr)
-					}
-				}
-			}
-		}
-		log.Printf("[CYCLE-1] Finished Solr context query (took %v)", time.Since(start))
-	}()
+	// We'll run 1 concurrent request (KB only)
+	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
