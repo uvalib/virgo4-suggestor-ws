@@ -154,7 +154,9 @@ CORE BEHAVIOR:
    - The primary canonical author(s) mapped from the query.
    - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
 3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
-4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.%s
+4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
+5. ORDERING: Return the suggestions in descending order of relevance and confidence, with the most authoritative matches first.
+%s
 
 IMPORTANT RULES:
 1. DO NOT use <think> tags or output internal reasoning. 
@@ -190,7 +192,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		}
 		sb.WriteString("=========================================\n\n")
 
-		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide up to 20 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
+		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide up to 20 relevant AUTHOR names in 'suggestions' in descending order of confidence, prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
