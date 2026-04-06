@@ -179,16 +179,16 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		
 		sb.WriteString("=== BACKGROUND RESEARCH FROM CATALOG ===\n")
 		if len(suggContext.SolrTitles) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog item titles: %v\n", suggContext.SolrTitles))
+			sb.WriteString(fmt.Sprintf("Top catalog item titles: %s\n", p.quoteList(suggContext.SolrTitles)))
 		}
 		if len(suggContext.SolrSubjectFacet) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog subjects: %v\n", suggContext.SolrSubjectFacet))
+			sb.WriteString(fmt.Sprintf("Top catalog subjects: %s\n", p.quoteList(suggContext.SolrSubjectFacet)))
 		}
 		if len(suggContext.SolrAuthorFacet) > 0 {
-			sb.WriteString(fmt.Sprintf("Top catalog authors: %v\n", suggContext.SolrAuthorFacet))
+			sb.WriteString(fmt.Sprintf("Top catalog authors: %s\n", p.quoteList(suggContext.SolrAuthorFacet)))
 		}
 		if len(suggContext.KBAuthors) > 0 {
-			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %v\n", suggContext.KBAuthors))
+			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %s\n", p.quoteList(suggContext.KBAuthors)))
 		}
 		sb.WriteString("=========================================\n\n")
 
@@ -444,4 +444,15 @@ func (p *BedrockProvider) getResponseSchema() string {
   },
   "required": ["suggestions"]
 }`
+}
+// quoteList returns a comma-separated string of quoted items for prompt clarity
+func (p *BedrockProvider) quoteList(list []string) string {
+	if len(list) == 0 {
+		return "[]"
+	}
+	quoted := make([]string, len(list))
+	for i, item := range list {
+		quoted[i] = fmt.Sprintf("\"%s\"", strings.TrimSpace(item))
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }

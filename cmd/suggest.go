@@ -236,6 +236,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			DefType:    baseParams.DefType,
 			Qf:         baseParams.Qf,
 			Rows:       10,
+			Facet:      true,
+			FacetField: []string{"subject_facet", "author_facet"},
+			FacetLimit: 10,
+			FacetMin:   1,
 		}
 
 		solrRes, err := s.SolrQuery(&solrReq)
