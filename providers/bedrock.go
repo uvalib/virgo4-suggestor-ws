@@ -122,75 +122,26 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 	return results, nil
 }
 
-// DissectQuery pre-processes the query to find synonyms, alternative phrases, and immediate authors
-func (p *BedrockProvider) DissectQuery(query string) (*DissectedQuery, error) {
-	systemPrompt := `You are an expert librarian assisting with search query analysis.
-Analyze the provided user query and identify:
-1. synonyms: Alternate words for the core concepts.
-2. alternativePhrases: Different ways to phrase the search.
-3. relatedAuthors: Any obvious and verified famous authors closely related to this topic.
-Return ONLY valid JSON matching this schema:
-{
-  "synonyms": ["string"],
-  "alternativePhrases": ["string"],
-  "relatedAuthors": ["string"]
-}`
 
-	userPrompt := fmt.Sprintf("Analyze this search query: \"%s\"", query)
-
-	messages := []sdktypes.Message{
-		{
-			Role: sdktypes.ConversationRoleUser,
-			Content: []sdktypes.ContentBlock{
-				&sdktypes.ContentBlockMemberText{Value: userPrompt},
-			},
-		},
-	}
-
-	input := &bedrockruntime.ConverseInput{
-		ModelId: aws.String(p.Model),
-		System: []sdktypes.SystemContentBlock{
-			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
-		},
-		Messages: messages,
-	}
-
-	if p.GuardrailID != "" {
-		input.GuardrailConfig = &sdktypes.GuardrailConfiguration{
-			GuardrailIdentifier: aws.String(p.GuardrailID),
-			GuardrailVersion:    aws.String(p.GuardrailVersion),
-		}
-	}
-
-	var dissected DissectedQuery
-	resp, err := p.BedrockRuntime.Converse(context.Background(), input)
-	if err != nil {
-		return nil, fmt.Errorf("DissectQuery converse error: %w", err)
-	}
-
-	if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
-		return nil, fmt.Errorf("query dissected was blocked by safety guardrails")
-	}
-
-	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
-	var finalContent string
-	for _, block := range output.Content {
-		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
-			finalContent += text.Value
-		}
-	}
-
-	finalContent = p.sanitizeJSON(finalContent)
-	if err := json.Unmarshal([]byte(finalContent), &dissected); err != nil {
-		return nil, fmt.Errorf("failed to parse DissectQuery response: %w (content: %s)", err, finalContent)
-	}
-
-	return &dissected, nil
-}
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
-func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool) (*AIResponse, error) {
-	systemPrompt := `You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
+func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error) {
+	hasDidYouMean := false
+	for _, f := range features {
+		if f == "didyoumean" {
+			hasDidYouMean = true
+			break
+		}
+	}
+
+	didYouMeanSchema := ""
+	didYouMeanInstruction := ""
+	if hasDidYouMean {
+		didYouMeanSchema = "\n  \"didYouMean\": \"string or null\","
+		didYouMeanInstruction = "\n5. QUERY REFINEMENT: If the user's query is misspelled or can be improved, provide a corrected version in 'didYouMean'. Otherwise, set it to null."
+	}
+
+	systemPrompt := fmt.Sprintf(`You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
 
 CORE BEHAVIOR:
 1. CANONICAL NAMES: Always return the full, recognized name of the primary author in "Last, First" format (e.g., "Shakespeare, William").
@@ -198,7 +149,7 @@ CORE BEHAVIOR:
    - The primary canonical author(s) mapped from the query.
    - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
 3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
-4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 6 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
+4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 6 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.%s
 
 IMPORTANT RULES:
 1. DO NOT use <think> tags or output internal reasoning. 
@@ -207,13 +158,12 @@ IMPORTANT RULES:
 4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).
 5. Output MUST be ONLY the raw JSON object matching the following schema. NO PREAMBLE. NO CONVERSATION. START WITH '{' AND END WITH '}'.
 CRITICAL: DO NOT include any introductory text (like "Okay, let's..."), markdown formatting (like triple-backtick json), or follow-up comments.
-{
-  "didYouMean": "string or null",
+{%s
   "suggestions": [
      { "name": "Author Name", "reason": "Why they are relevant" }
   ]
 }
-START RESPONSE WITH '{' AND NOTHING ELSE.`
+START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSchema)
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -233,15 +183,9 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`
 		if len(suggContext.KBAuthors) > 0 {
 			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %v\n", suggContext.KBAuthors))
 		}
-		if suggContext.Dissected != nil {
-			sb.WriteString(fmt.Sprintf("Related terms/synonyms: %v\n", suggContext.Dissected.Synonyms))
-			if len(suggContext.Dissected.RelatedAuthors) > 0 {
-				sb.WriteString(fmt.Sprintf("Conceptually related authors: %v\n", suggContext.Dissected.RelatedAuthors))
-			}
-		}
 		sb.WriteString("=========================================\n\n")
 
-		sb.WriteString("INSTRUCTION: Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
+		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide 6-10 relevant AUTHOR names in 'suggestions' prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()
 	} else {
 		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)

@@ -35,9 +35,10 @@ type Suggestion struct {
 
 // SuggestionRequest defines the format of a suggestion request
 type SuggestionRequest struct {
-	Query    string `json:"query"`
-	AIPrompt string `json:"aiPrompt"`
-	Debug    bool   `json:"debug"`
+	Query    string   `json:"query"`
+	AIPrompt string   `json:"aiPrompt"`
+	Debug    bool     `json:"debug"`
+	Features []string `json:"features"`
 }
 
 // SuggestionResponse contains the full set of suggestions
@@ -217,8 +218,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		startCycle1 = time.Now()
 	}
 	
-	// We'll run 3 concurrent requests (Solr, KB, and Query Dissection)
-	wg.Add(3)
+	// We'll run 2 concurrent requests (Solr and KB)
+	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
@@ -283,21 +284,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
 	}()
 
-	go func() {
-		defer wg.Done()
-		if s.svc.AIProvider == nil {
-			return
-		}
-		start := time.Now()
-		log.Printf("[CYCLE-1] Starting AI Query Dissection")
-		dissected, err := s.svc.AIProvider.DissectQuery(rawQuery)
-		if err != nil {
-			log.Printf("[CYCLE-1] Dissection warning: %s (took %v)", err.Error(), time.Since(start))
-			return
-		}
-		ctxData.Dissected = dissected
-		log.Printf("[CYCLE-1] Finished AI Query Dissection (took %v)", time.Since(start))
-	}()
 
 	done := make(chan struct{})
 	go func() {
@@ -323,7 +309,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		if s.req.Debug {
 			startCycle2 = time.Now()
 		}
-		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
+		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
 		if err != nil {
 			log.Printf("[CYCLE-2] ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startCycle2))
 		} else {
