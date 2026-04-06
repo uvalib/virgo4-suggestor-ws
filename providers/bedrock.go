@@ -227,7 +227,6 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		input.GuardrailConfig = &sdktypes.GuardrailConfiguration{
 			GuardrailIdentifier: aws.String(p.GuardrailID),
 			GuardrailVersion:    aws.String(p.GuardrailVersion),
-			Trace:               sdktypes.GuardrailTraceEnabled,
 		}
 	}
 	
@@ -242,21 +241,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 	}
 
 	if resp.StopReason == sdktypes.StopReasonGuardrailIntervened {
-		if resp.Trace != nil && resp.Trace.Guardrail != nil {
-			g := resp.Trace.Guardrail
-			// Input assessment is a map where each key has a single assessment
-			for key, a := range g.InputAssessment {
-				log.Printf("[GUARDRAIL-TRACE] Input Assessment (Rule: %s): Content=%v, Sensitive=%v, Word=%v", 
-					key, a.ContentPolicy, a.SensitiveInformationPolicy, a.WordPolicy)
-			}
-			// Output assessments is a map where each key has a slice of assessments
-			for key, assessments := range g.OutputAssessments {
-				for i, a := range assessments {
-					log.Printf("[GUARDRAIL-TRACE] Output Assessment %d (Rule: %s): Content=%v, Sensitive=%v, Word=%v", 
-						i, key, a.ContentPolicy, a.SensitiveInformationPolicy, a.WordPolicy)
-				}
-			}
-		}
+		log.Printf("[GUARDRAIL] Intervention occurred during GetSuggestions")
 		return nil, fmt.Errorf("suggestion generation was blocked by safety guardrails")
 	}
 
