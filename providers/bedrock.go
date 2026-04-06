@@ -266,11 +266,22 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 	}
 
 	// Success!
-	if debug && resp.Usage != nil {
-		aiResponse.Usage = AIUsage{
-			InputTokens:  int(*resp.Usage.InputTokens),
-			OutputTokens: int(*resp.Usage.OutputTokens),
-			TotalTokens:  int(*resp.Usage.TotalTokens),
+	if debug {
+		if resp.Usage != nil {
+			aiResponse.Usage = AIUsage{
+				InputTokens:  int(*resp.Usage.InputTokens),
+				OutputTokens: int(*resp.Usage.OutputTokens),
+				TotalTokens:  int(*resp.Usage.TotalTokens),
+			}
+		}
+		aiResponse.InputPrompt = fmt.Sprintf("SYSTEM PROMPT:\n%s\n\nUSER PROMPT:\n%s", systemPrompt, userPrompt)
+		aiResponse.RawOutput = finalContent
+		
+		// Extract reasoning if present in <think> tags
+		startThink := strings.Index(finalContent, "<think>")
+		endThink := strings.Index(finalContent, "</think>")
+		if startThink != -1 && endThink != -1 && endThink > startThink {
+			aiResponse.Reasoning = strings.TrimSpace(finalContent[startThink+len("<think>") : endThink])
 		}
 	}
 

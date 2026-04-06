@@ -5,6 +5,9 @@ type AIResponse struct {
 	DidYouMean  string                 `json:"didYouMean"`
 	Suggestions []AIResponseSuggestion `json:"suggestions"`
 	Usage       AIUsage                `json:"usage,omitempty"`
+	Reasoning   string                 `json:"reasoning,omitempty"`
+	InputPrompt string                 `json:"inputPrompt,omitempty"`
+	RawOutput   string                 `json:"rawOutput,omitempty"`
 }
 
 // AIUsage captures token metrics from the provider

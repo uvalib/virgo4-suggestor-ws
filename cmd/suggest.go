@@ -54,8 +54,11 @@ type SuggestionMetadata struct {
 	Cycle1TimeMS int64 `json:"cycle1_time_ms"`
 	Cycle2TimeMS int64 `json:"cycle2_time_ms"`
 	Cycle3TimeMS int64 `json:"cycle3_time_ms"`
-	InputTokens  int   `json:"input_tokens"`
-	OutputTokens int   `json:"output_tokens"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	InputPrompt  string `json:"input_prompt,omitempty"`
+	RawOutput    string `json:"raw_output,omitempty"`
+	Reasoning    string `json:"reasoning,omitempty"`
 }
 
 func boolOptionWithFallback(opt string, fallback bool) bool {
@@ -304,12 +307,14 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	var candidates []Suggestion
 	var aiUsage providers.AIUsage
+	var aiRes *providers.AIResponse
 	if s.svc.AIProvider != nil {
 		var startCycle2 time.Time
 		if s.req.Debug {
 			startCycle2 = time.Now()
 		}
-		aiRes, err := s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
+		var err error
+		aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
 		if err != nil {
 			log.Printf("[CYCLE-2] ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startCycle2))
 		} else {
@@ -380,6 +385,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			Cycle3TimeMS: 0,
 			InputTokens:  aiUsage.InputTokens,
 			OutputTokens: aiUsage.OutputTokens,
+			InputPrompt:  aiRes.InputPrompt,
+			RawOutput:    aiRes.RawOutput,
+			Reasoning:    aiRes.Reasoning,
 		}
 		if !startCycle3.IsZero() {
 			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
