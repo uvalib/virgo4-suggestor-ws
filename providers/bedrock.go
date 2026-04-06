@@ -57,8 +57,8 @@ func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string
 		Model:            bedrockModel,
 		KnowledgeBaseID:  knowledgeBaseID,
 		// Guardrails disabled temporarily for debugging (per user request)
-		GuardrailID:      "", 
-		GuardrailVersion: "",
+		GuardrailID:      "ly2pi6kabrnp", 
+		GuardrailVersion: "1",
 		Config:           cfg,
 		BedrockRuntime:   bedrockruntime.NewFromConfig(cfg),
 		BedrockAgent:     bedrockagentruntime.NewFromConfig(cfg),
