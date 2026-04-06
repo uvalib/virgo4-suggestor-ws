@@ -189,10 +189,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	var fullStart time.Time
 	if s.req.Debug {
 		fullStart = time.Now()
+		log.Printf("[DEBUG] Debug flag is enabled for this request")
 	}
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
 	var cycle1Time, cycle2Time int64
+	var startCycle3 time.Time
 
 	// Ensure query is parsed (though we might use the raw query for the LLM)
 	if err := s.ParseQuery(); err != nil {
@@ -353,7 +355,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if len(candidates) > 0 {
-		var startCycle3 time.Time
 		if s.req.Debug {
 			startCycle3 = time.Now()
 		}
@@ -378,19 +379,24 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}(cand)
 		}
 		vwg.Wait()
-		log.Printf("[CYCLE-3] Completed parallel verification for %d candidates.", len(res.Suggestions))
+	}
 
-		if s.req.Debug {
-			res.Metadata = &SuggestionMetadata{
-				TotalTimeMS:  time.Since(fullStart).Milliseconds(),
-				Cycle1TimeMS: cycle1Time,
-				Cycle2TimeMS: cycle2Time,
-				Cycle3TimeMS: time.Since(startCycle3).Milliseconds(),
-				InputTokens:  aiUsage.InputTokens,
-				OutputTokens: aiUsage.OutputTokens,
-			}
+	if s.req.Debug {
+		res.Metadata = &SuggestionMetadata{
+			TotalTimeMS:  time.Since(fullStart).Milliseconds(),
+			Cycle1TimeMS: cycle1Time,
+			Cycle2TimeMS: cycle2Time,
+			Cycle3TimeMS: 0,
+			InputTokens:  aiUsage.InputTokens,
+			OutputTokens: aiUsage.OutputTokens,
+		}
+		if !startCycle3.IsZero() {
+			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
 		}
 	}
+
+	log.Printf("[DEBUG] Final Response: did_you_mean='%s', suggestions=%d, metadata=%v", 
+		res.DidYouMean, len(res.Suggestions), res.Metadata != nil)
 
 	return res, nil
 }
