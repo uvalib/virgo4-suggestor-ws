@@ -126,11 +126,16 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error) {
+	modelID := p.Model
 	hasDidYouMean := false
 	for _, f := range features {
 		if f == "didyoumean" {
 			hasDidYouMean = true
-			break
+		} else if strings.HasPrefix(f, "llm:") {
+			modelID = strings.TrimPrefix(f, "llm:")
+			if debug {
+				log.Printf("[DEBUG] Model override requested: %s", modelID)
+			}
 		}
 	}
 
@@ -207,7 +212,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 
 	// Single Turn Completion (RAG Pattern)
 	input := &bedrockruntime.ConverseInput{
-		ModelId: aws.String(p.Model),
+		ModelId: aws.String(modelID),
 		System: []sdktypes.SystemContentBlock{
 			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
 		},

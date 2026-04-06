@@ -93,7 +93,7 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 
 	// Force specific model as our logic is currently model-tuned.
 	// This overrides any ENV or JSON config.
-	cfg.AI.Model = "moonshotai.kimi-k2.5"
+	cfg.AI.Model = "google.gemma-3-4b-it"
 
 	// Initialize AI Provider
 	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
