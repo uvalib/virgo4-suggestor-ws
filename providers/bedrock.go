@@ -186,7 +186,11 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		sb.WriteString("INSTRUCTION: Analyze the query intent, considering synonyms and related concepts. Provide up to 20 relevant AUTHOR names in 'suggestions' in descending order of confidence, prioritizing the authors found in the Background Research. Output MUST be ONLY the raw JSON object. NO markdown formatting. NO comments. START RESPONSE WITH '{' AND NOTHING ELSE.\n")
 		userPrompt = sb.String()
 	} else {
-		userPrompt = strings.ReplaceAll(customPrompt, "$QUERY", query)
+		// Support documented variables in custom prompts:
+		// $QUERY: the user's search query
+		// $SUGGESTIONS: gathered Knowledge Base author hits for prompt grounding
+		r1 := strings.ReplaceAll(customPrompt, "$QUERY", query)
+		userPrompt = strings.ReplaceAll(r1, "$SUGGESTIONS", p.quoteList(suggContext.KBAuthors))
 	}
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
