@@ -56,9 +56,31 @@ type SuggestionMetadata struct {
 	Cycle3TimeMS int64 `json:"cycle3_time_ms"`
 	InputTokens  int    `json:"input_tokens"`
 	OutputTokens int    `json:"output_tokens"`
-	InputPrompt  string `json:"input_prompt,omitempty"`
-	RawOutput    string `json:"raw_output,omitempty"`
-	Reasoning    string `json:"reasoning,omitempty"`
+	InputPrompt  string  `json:"input_prompt,omitempty"`
+	RawOutput    string  `json:"raw_output,omitempty"`
+	Reasoning    string  `json:"reasoning,omitempty"`
+	CostPer1K    float64 `json:"cost_per_1k,omitempty"`
+}
+
+func calculateCostPer1K(model string, inputTokens, outputTokens int) float64 {
+	var inputPer1M, outputPer1M float64
+
+	switch model {
+	case "google.gemma-3-4b-it":
+		inputPer1M = 0.04
+		outputPer1M = 0.08
+	case "google.gemma-3-12b-it":
+		inputPer1M = 0.09
+		outputPer1M = 0.29
+	case "google.gemma-3-27b-it":
+		inputPer1M = 0.23
+		outputPer1M = 0.38
+	default:
+		return 0.0 // Pricing unknown for this model
+	}
+
+	// Cost for 1,000 requests based on token counts
+	return (float64(inputTokens)*inputPer1M/1000000.0 + float64(outputTokens)*outputPer1M/1000000.0) * 1000.0
 }
 
 func boolOptionWithFallback(opt string, fallback bool) bool {
@@ -341,6 +363,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			InputPrompt:  aiRes.InputPrompt,
 			RawOutput:    aiRes.RawOutput,
 			Reasoning:    aiRes.Reasoning,
+			CostPer1K:    calculateCostPer1K(s.svc.config.AI.Model, aiUsage.InputTokens, aiUsage.OutputTokens),
 		}
 		if !startCycle3.IsZero() {
 			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
