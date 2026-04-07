@@ -75,6 +75,13 @@ func calculateCostPer1K(model string, inputTokens, outputTokens int) float64 {
 	case "google.gemma-3-27b-it":
 		inputPer1M = 0.23
 		outputPer1M = 0.38
+	case "moonshotai.kimi-k2.5":
+		inputPer1M = 0.60
+		outputPer1M = 3.00
+	case "nvidia.nemotron-nano-9b-v2":
+		// Example placeholders based on typical nano model inference costs
+		inputPer1M = 0.60
+		outputPer1M = 1.70
 	default:
 		return 0.0 // Pricing unknown for this model
 	}
