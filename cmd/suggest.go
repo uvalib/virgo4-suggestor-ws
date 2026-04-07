@@ -353,6 +353,13 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if s.req.Debug {
+		modelUsed := s.svc.config.AI.Model
+		for _, f := range s.req.Features {
+			if strings.HasPrefix(f, "llm:") {
+				modelUsed = strings.TrimPrefix(f, "llm:")
+			}
+		}
+
 		res.Metadata = &SuggestionMetadata{
 			TotalTimeMS:  time.Since(fullStart).Milliseconds(),
 			Cycle1TimeMS: cycle1Time,
@@ -363,7 +370,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			InputPrompt:  aiRes.InputPrompt,
 			RawOutput:    aiRes.RawOutput,
 			Reasoning:    aiRes.Reasoning,
-			CostPer1K:    calculateCostPer1K(s.svc.config.AI.Model, aiUsage.InputTokens, aiUsage.OutputTokens),
+			CostPer1K:    calculateCostPer1K(modelUsed, aiUsage.InputTokens, aiUsage.OutputTokens),
 		}
 		if !startCycle3.IsZero() {
 			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()

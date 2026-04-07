@@ -92,14 +92,14 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	}
 
 	// Force specific model as our logic is currently model-tuned.
-	// This overrides any ENV or JSON config.
+	// This overrides any ENV or JSON config to enforce the 4b default.
 	cfg.AI.Model = "google.gemma-3-4b-it"
 
 	// Initialize AI Provider
 	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
 	log.Printf("[SERVICE] solr healthcheck url = [%s]", healthCtx.url)
 	log.Printf("[SERVICE] ai provider          = [%s]", cfg.AI.Provider)
-	log.Printf("[SERVICE] ai model (FORCED)     = [%s]", cfg.AI.Model)
+	log.Printf("[SERVICE] ai model             = [%s]", cfg.AI.Model)
 
 	// Initialize AI Provider
 	if cfg.AI.Provider == "bedrock" {
