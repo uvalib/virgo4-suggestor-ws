@@ -462,7 +462,12 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		
 		// Guard against overly loose 'repairs' by checking word overlap
 		if isSimilar(value, canonical) {
-			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, solrRes.Response.Docs[0].Count)
+			count := solrRes.Response.Docs[0].Count
+			if count < 1 {
+				log.Printf("[CYCLE-3] Rejecting '%s %s' -> '%s' (0 catalog hits)", suggType, value, canonical)
+				return "", false
+			}
+			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, count)
 			return canonical, true
 		}
 		log.Printf("[CYCLE-3] Rejecting '%s %s' -> '%s' (Similarity too low)", suggType, value, canonical)

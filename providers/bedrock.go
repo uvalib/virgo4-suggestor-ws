@@ -156,6 +156,7 @@ CORE BEHAVIOR:
 3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
 4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
 5. ORDERING: Return the suggestions in descending order of relevance and confidence, with the most authoritative matches first.
+6. MINIMUM VIABILITY: Prioritize authors who are likely to have multiple records. Avoid extremely niche or single-match suggestions unless they are an exact match for the query.
 %s
 
 IMPORTANT RULES:
