@@ -60,6 +60,7 @@ type SuggestionMetadata struct {
 	RawOutput    string  `json:"raw_output,omitempty"`
 	Reasoning    string  `json:"reasoning,omitempty"`
 	CostPer1K    float64 `json:"cost_per_1k,omitempty"`
+	Model        string  `json:"model,omitempty"`
 }
 
 func calculateCostPer1K(model string, inputTokens, outputTokens int) float64 {
@@ -378,6 +379,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			InputTokens:  aiUsage.InputTokens,
 			OutputTokens: aiUsage.OutputTokens,
 			CostPer1K:    calculateCostPer1K(modelUsed, aiUsage.InputTokens, aiUsage.OutputTokens),
+			Model:        modelUsed,
 		}
 		if aiRes != nil {
 			res.Metadata.InputPrompt = aiRes.InputPrompt
