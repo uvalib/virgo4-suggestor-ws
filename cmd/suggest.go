@@ -82,6 +82,9 @@ func calculateCostPer1K(model string, inputTokens, outputTokens int) float64 {
 		// Example placeholders based on typical nano model inference costs
 		inputPer1M = 0.60
 		outputPer1M = 1.70
+	case "anthropic.claude-haiku-4-5-20251001-v1:0":
+		inputPer1M = 1.00
+		outputPer1M = 5.00
 	default:
 		return 0.0 // Pricing unknown for this model
 	}
