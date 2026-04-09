@@ -377,10 +377,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			Cycle3TimeMS: 0,
 			InputTokens:  aiUsage.InputTokens,
 			OutputTokens: aiUsage.OutputTokens,
-			InputPrompt:  aiRes.InputPrompt,
-			RawOutput:    aiRes.RawOutput,
-			Reasoning:    aiRes.Reasoning,
 			CostPer1K:    calculateCostPer1K(modelUsed, aiUsage.InputTokens, aiUsage.OutputTokens),
+		}
+		if aiRes != nil {
+			res.Metadata.InputPrompt = aiRes.InputPrompt
+			res.Metadata.RawOutput = aiRes.RawOutput
+			res.Metadata.Reasoning = aiRes.Reasoning
 		}
 		if !startCycle3.IsZero() {
 			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
