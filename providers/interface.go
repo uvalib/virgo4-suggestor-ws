@@ -23,9 +23,15 @@ type AIResponseSuggestion struct {
 	Reason string `json:"reason"`
 }
 
+// AuthorHit contains an individual author hit from the Knowledge Base
+type AuthorHit struct {
+	Name string `json:"name"`
+	Bio  string `json:"bio,omitempty"`
+}
+
 // SuggestionContextData holds the gathered research from Solr and KB
 type SuggestionContextData struct {
-	KBAuthors []string
+	KBAuthors []AuthorHit
 }
 
 // AIProvider defines the interface for different AI backends
@@ -41,5 +47,5 @@ type AIProvider interface {
 	GetModel() string
 
 	// Retrieve will query the provider's Knowledge Base (if supported) and return relevant metadata
-	Retrieve(query string, limit int) ([]string, error)
+	Retrieve(query string, limit int) ([]AuthorHit, error)
 }

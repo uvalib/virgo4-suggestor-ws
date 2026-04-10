@@ -76,7 +76,7 @@ func (p *BedrockProvider) GetModel() string {
 }
 
 // Retrieve will query the Bedrock Knowledge Base and return relevant author metadata
-func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
+func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error) {
 	if p.KnowledgeBaseID == "" {
 		return nil, nil
 	}
@@ -98,24 +98,37 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]string, error) {
 		return nil, fmt.Errorf("failed to retrieve from KB: %w", err)
 	}
 
-	results := []string{}
+	results := []AuthorHit{}
 	for _, ref := range resp.RetrievalResults {
-		author := ""
+		hit := AuthorHit{}
+
+		// 1. Extract Author Name
 		if val, ok := ref.Metadata["author_name"]; ok {
-			// val is bedrockagentruntime/document.Interface. 
-			// Use its UnmarshalSmithyDocument method to decode to a string.
 			var strVal string
 			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				author = strVal
+				hit.Name = strVal
 			} else {
-				author = fmt.Sprintf("%v", val)
+				hit.Name = fmt.Sprintf("%v", val)
 			}
 		}
-		
-		if author != "" {
-			results = append(results, author)
+
+		// 2. Extract Author Bio
+		if val, ok := ref.Metadata["bio"]; ok {
+			var strVal string
+			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
+				hit.Bio = strVal
+			}
+		}
+
+		if hit.Name != "" {
+			results = append(results, hit)
 		} else if ref.Content != nil && ref.Content.Text != nil {
-			results = append(results, *ref.Content.Text)
+			// Fallback: use first few words of content as name if metadata is missing
+			fallback := *ref.Content.Text
+			if len(fallback) > 50 {
+				fallback = fallback[:50] + "..."
+			}
+			results = append(results, AuthorHit{Name: fallback})
 		}
 	}
 
@@ -186,7 +199,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		
 		sb.WriteString("=== BACKGROUND RESEARCH ===\n")
 		if len(suggContext.KBAuthors) > 0 {
-			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits: %s\n", p.quoteList(suggContext.KBAuthors)))
+			sb.WriteString(fmt.Sprintf("Direct Knowledge Base author hits:\n%s\n", p.formatAuthorHits(suggContext.KBAuthors)))
 		}
 		sb.WriteString("===========================\n\n")
 
@@ -197,7 +210,7 @@ START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSch
 		// $QUERY: the user's search query
 		// $SUGGESTIONS: gathered Knowledge Base author hits for prompt grounding
 		r1 := strings.ReplaceAll(customPrompt, "$QUERY", query)
-		userPrompt = strings.ReplaceAll(r1, "$SUGGESTIONS", p.quoteList(suggContext.KBAuthors))
+		userPrompt = strings.ReplaceAll(r1, "$SUGGESTIONS", p.formatAuthorHits(suggContext.KBAuthors))
 	}
 
 	log.Printf("[AGENT] Config: model=%s, KB=%s", p.Model, p.KnowledgeBaseID)
@@ -447,14 +460,18 @@ func (p *BedrockProvider) getResponseSchema() string {
   "required": ["suggestions"]
 }`
 }
-// quoteList returns a comma-separated string of quoted items for prompt clarity
-func (p *BedrockProvider) quoteList(list []string) string {
+// formatAuthorHits returns a clear, newline-separated list of author hits for the prompt
+func (p *BedrockProvider) formatAuthorHits(list []AuthorHit) string {
 	if len(list) == 0 {
 		return "[]"
 	}
-	quoted := make([]string, len(list))
-	for i, item := range list {
-		quoted[i] = fmt.Sprintf("\"%s\"", strings.TrimSpace(item))
+	var sb strings.Builder
+	for _, item := range list {
+		if item.Bio != "" {
+			sb.WriteString(fmt.Sprintf("- %s: %s\n", item.Name, item.Bio))
+		} else {
+			sb.WriteString(fmt.Sprintf("- %s\n", item.Name))
+		}
 	}
-	return "[" + strings.Join(quoted, ", ") + "]"
+	return sb.String()
 }

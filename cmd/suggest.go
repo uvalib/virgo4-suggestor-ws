@@ -325,7 +325,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		for _, a := range ctxData.KBAuthors {
 			candidates = append(candidates, Suggestion{
 				Type:   "author", 
-				Value:  a,
+				Value:  a.Name,
 				Reason: "Author's metadata aligns with your query",
 			})
 		}
