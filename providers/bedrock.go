@@ -103,7 +103,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		hit := AuthorHit{}
 
 		// 1. Extract Author Name
-		if val, ok := ref.Metadata["author_name"]; ok {
+		if val, ok := ref.Metadata["original_facet_label"]; ok {
 			var strVal string
 			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
 				hit.Name = strVal
@@ -120,15 +120,10 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 			}
 		}
 
+		// Only include hits that have a valid name extracted from metadata.
+		// We avoid falling back to raw content text as it is often truncated by KB chunking.
 		if hit.Name != "" {
 			results = append(results, hit)
-		} else if ref.Content != nil && ref.Content.Text != nil {
-			// Fallback: use first few words of content as name if metadata is missing
-			fallback := *ref.Content.Text
-			if len(fallback) > 50 {
-				fallback = fallback[:50] + "..."
-			}
-			results = append(results, AuthorHit{Name: fallback})
 		}
 	}
 
