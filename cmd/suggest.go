@@ -450,6 +450,7 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		}
 	}
 
+	solrReq := SolrRequest{}
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
 		Rows:    1, // We only need the top canonical match
