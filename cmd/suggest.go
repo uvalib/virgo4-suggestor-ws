@@ -311,7 +311,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					candidates = append(candidates, Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
 				}
 			}
-			res.DidYouMean = aiRes.DidYouMean
+			// Only show correction if it's non-empty and DIFFERENT from the original query
+			if aiRes.DidYouMean != "" && !strings.EqualFold(strings.TrimSpace(aiRes.DidYouMean), strings.TrimSpace(rawQuery)) {
+				res.DidYouMean = aiRes.DidYouMean
+			}
 			aiUsage = aiRes.Usage
 		}
 		if s.req.Debug {

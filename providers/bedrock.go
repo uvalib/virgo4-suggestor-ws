@@ -234,7 +234,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
 		Messages: messages,
 		InferenceConfig: &sdktypes.InferenceConfiguration{
 			MaxTokens:   aws.Int32(3072), // Large buffer to ensure JSON is not cut off by chatty/thinking models
-			Temperature: aws.Float32(0.1), // Even lower temp for more rigid, deterministic output
+			Temperature: aws.Float32(0.0), // Zero temp for maximum determinism and consistency
 		},
 	}
 
