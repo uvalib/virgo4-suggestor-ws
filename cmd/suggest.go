@@ -439,7 +439,17 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) (string, bool) {
 	sugg := s.svc.config.Suggestions.Author
 
-	solrReq := SolrRequest{}
+	// Standard filters often include count:[2 TO *] to avoid niche results.
+	// For AI-suggested authors, we relax this to count:[1 TO *] because we 
+	// trust the AI's relevance judgment and want to show enriched researchers.
+	fq := make([]string, len(sugg.Params.Fq))
+	copy(fq, sugg.Params.Fq)
+	for i, f := range fq {
+		if strings.Contains(f, "count:[2 TO *]") {
+			fq[i] = strings.ReplaceAll(f, "count:[2 TO *]", "count:[1 TO *]")
+		}
+	}
+
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
 		Rows:    1, // We only need the top canonical match
@@ -449,7 +459,7 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		Mm:      "100%", // Require all words from AI to be present in Solr doc
 		Fl:      []string{"phrase", "count"},
 		Sort:    sugg.Params.Sort,
-		Fq:      sugg.Params.Fq, // Include mandatory filters like type:author and count:[2 TO *]
+		Fq:      fq,
 	}
 
 	// If no filters were provided in config, ensure we at least match the type
