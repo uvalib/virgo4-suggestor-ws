@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -423,7 +424,31 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 		}
 	}
 
-	// 2. Remove literal newlines/returns within the JSON block
+	// 2. Escape internal unescaped quotes in key-value pairs (Naive but effective for LLM output)
+	// We handle name and reason fields specifically.
+	re := regexp.MustCompile(`"(name|reason)":\s*"(.*?)"(\s*[,}])`)
+	input = re.ReplaceAllStringFunc(input, func(m string) string {
+		parts := re.FindStringSubmatch(m)
+		if len(parts) < 4 {
+			return m
+		}
+		key := parts[1]
+		val := parts[2]
+		suffix := parts[3]
+
+		// Escape any double quotes that aren't already escaped.
+		// We skip the first and last quotes because they are part of the JSON structure.
+		var sb strings.Builder
+		for i := 0; i < len(val); i++ {
+			if val[i] == '"' && (i == 0 || val[i-1] != '\\') {
+				sb.WriteByte('\\')
+			}
+			sb.WriteByte(val[i])
+		}
+		return fmt.Sprintf("\"%s\": \"%s\"%s", key, sb.String(), suffix)
+	})
+
+	// 3. Remove literal newlines/returns within the JSON block
 	// We preserve spaces to avoid merging words.
 	input = strings.ReplaceAll(input, "\n", " ")
 	input = strings.ReplaceAll(input, "\r", " ")

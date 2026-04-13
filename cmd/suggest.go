@@ -451,11 +451,14 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	}
 
 	solrReq := SolrRequest{}
+	// Escape any internal quotes in the value to avoid breaking the Solr phrase query.
+	escapedValue := strings.ReplaceAll(value, "\"", "\\\"")
+
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
 		Rows:    1, // We only need the top canonical match
 		DefType: sugg.Params.DefType,
-		Q:       value,
+		Q:       fmt.Sprintf("\"%s\"", escapedValue), // Wrap in quotes for exact phrase matching
 		Qf:      sugg.Params.Qf,
 		Mm:      "100%", // Require all words from AI to be present in Solr doc
 		Fl:      []string{"phrase", "count"},
@@ -525,8 +528,8 @@ func isSimilar(orig, canon string) bool {
 	}
 
 	// For author names, we expect high overlap regardless of 'First Last' vs 'Last, First' order.
-	// Aim for at least 70% of original words found in canonical.
-	threshold := float64(len(oWords)) * 0.70
+	// threshold. Aim for at least 60% of original words found in canonical.
+	threshold := float64(len(oWords)) * 0.60
 	return float64(matches) >= threshold
 }
 
