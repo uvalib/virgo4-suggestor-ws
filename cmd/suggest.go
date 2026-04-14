@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -454,16 +455,24 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	}
 
 	solrReq := SolrRequest{}
-	// Escape any internal quotes in the value to avoid breaking the Solr phrase query.
-	escapedValue := strings.ReplaceAll(value, "\"", "\\\"")
+	// 1. Strip leading non-alphanumeric characters (like * in *Wenger, Jared)
+	// These are common in the catalog but the AI won't know to suggest them.
+	cleanedName := strings.TrimLeft(value, "*\"' (")
+
+	// 2. Escape Solr special characters in the middle of the name to prevent parser errors
+	// Special chars: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+	escapedValue := cleanedName
+	for _, char := range []string{"(", ")", "[", "]", "{", "}", ":", "^", "~", "*", "?", "\\", "/", "-", "+"} {
+		escapedValue = strings.ReplaceAll(escapedValue, char, "\\"+char)
+	}
 
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
 		Rows:    1, // We only need the top canonical match
-		DefType: sugg.Params.DefType,
-		Q:       fmt.Sprintf("\"%s\"", escapedValue), // Wrap in quotes for exact phrase matching
+		DefType: "edismax",
+		Q:       escapedValue, // Non-quoted to allow First Last -> Last, First matching
 		Qf:      sugg.Params.Qf,
-		Mm:      "100%", // Require all words from AI to be present in Solr doc
+		Mm:      "100%", // Require all words from AI to be present in the doc
 		Fl:      []string{"phrase", "count"},
 		Sort:    sugg.Params.Sort,
 		Fq:      fq,
@@ -506,7 +515,18 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 // It ensures that we don't 'repair' a name into something completely unrelated.
 func isSimilar(orig, canon string) bool {
 	clean := func(s string) []string {
-		// Remove commas and periods (for initials) then lowercase and split
+		// 1. Strip catalog-specific leading symbols (e.g., * in *Wenger, Jared)
+		s = strings.TrimLeft(s, "*\"' ")
+
+		// 2. Remove dates: comma followed by digits and optional dash (e.g., ", 1973-")
+		reDates := regexp.MustCompile(`,?\s*\d{4}[-\d]*`)
+		s = reDates.ReplaceAllString(s, "")
+
+		// 3. Remove roles and descriptions in parentheses (e.g., "(editor)")
+		reRoles := regexp.MustCompile(`\(.*?\)`)
+		s = reRoles.ReplaceAllString(s, "")
+
+		// Standardize punctuation and split
 		s = strings.ReplaceAll(s, ",", " ")
 		s = strings.ReplaceAll(s, ".", " ")
 		return strings.Fields(strings.ToLower(s))
