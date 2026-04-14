@@ -468,11 +468,11 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 
 	solrReq.json.Params = SolrRequestParams{
 		Start:   0,
-		Rows:    1, // We only need the top canonical match
+		Rows:    10, // Fetch up to 10 candidates to find the 'best fit'
 		DefType: "edismax",
 		Q:       escapedValue, // Non-quoted to allow First Last -> Last, First matching
 		Qf:      sugg.Params.Qf,
-		Mm:      "100%", // Require all words from AI to be present in the doc
+		Mm:      "75%", // Relaxed from 100% to handle missing initials or minor variations
 		Fl:      []string{"phrase", "count"},
 		Sort:    sugg.Params.Sort,
 		Fq:      fq,
@@ -491,29 +491,43 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	}
 
 	if solrRes.Response.NumFound > 0 && len(solrRes.Response.Docs) > 0 {
-		canonical := solrRes.Response.Docs[0].Phrase
-		
-		// Guard against overly loose 'repairs' by checking word overlap
-		if isSimilar(value, canonical) {
-			count := solrRes.Response.Docs[0].Count
-			if count < 1 {
-				log.Printf("[CYCLE-3] Rejecting '%s %s' -> '%s' (0 catalog hits)", suggType, value, canonical)
-				return "", false
+		var bestCanonical string
+		var bestScore float64
+		var bestCount int
+
+		for _, doc := range solrRes.Response.Docs {
+			canonical := doc.Phrase
+			score, ok := isSimilar(value, canonical)
+			if ok {
+				// If we have multiple 'ok' matches, pick the one with the highest similarity score.
+				// If scores are tied, prefer the one with a higher catalog count.
+				if score > bestScore || (score == bestScore && doc.Count > bestCount) {
+					bestScore = score
+					bestCanonical = canonical
+					bestCount = doc.Count
+				}
 			}
-			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d catalog hits)", suggType, value, canonical, count)
-			return canonical, true
 		}
-		log.Printf("[CYCLE-3] Rejecting '%s %s' -> '%s' (Similarity too low)", suggType, value, canonical)
+
+		if bestCanonical != "" {
+			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d hits, similarity %0.2f)", suggType, value, bestCanonical, bestCount, bestScore)
+			return bestCanonical, true
+		}
+
+		// If we got hits but none were similar, log the top failure for diagnostics
+		topCanon := solrRes.Response.Docs[0].Phrase
+		topScore, _ := isSimilar(value, topCanon)
+		log.Printf("[CYCLE-3] Rejecting '%s %s' -> Top candidate '%s' has similarity too low (%0.2f)", suggType, value, topCanon, topScore)
 		return "", false
 	}
 
-	log.Printf("[CYCLE-3] Rejecting '%s %s' (No canonical name found with 100%% word match)", suggType, value)
+	log.Printf("[CYCLE-3] Rejecting '%s %s' (No catalog results found with 75%% word match)", suggType, value)
 	return "", false
 }
 
 // isSimilar performs a basic similarity check between original and canonical names.
 // It ensures that we don't 'repair' a name into something completely unrelated.
-func isSimilar(orig, canon string) bool {
+func isSimilar(orig, canon string) (float64, bool) {
 	clean := func(s string) []string {
 		// 1. Strip catalog-specific leading symbols (e.g., * in *Wenger, Jared)
 		s = strings.TrimLeft(s, "*\"' ")
@@ -536,7 +550,7 @@ func isSimilar(orig, canon string) bool {
 	cWords := clean(canon)
 
 	if len(oWords) == 0 || len(cWords) == 0 {
-		return false
+		return 0, false
 	}
 
 	// Basic check: see how many words from original are in canonical
@@ -552,8 +566,8 @@ func isSimilar(orig, canon string) bool {
 
 	// For author names, we expect high overlap regardless of 'First Last' vs 'Last, First' order.
 	// threshold. Aim for at least 60% of original words found in canonical.
-	threshold := float64(len(oWords)) * 0.60
-	return float64(matches) >= threshold
+	score := float64(matches) / float64(len(oWords))
+	return score, score >= 0.60
 }
 
 // HandlePingRequest sends a ping request to Solr and checks the response.
