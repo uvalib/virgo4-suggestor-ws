@@ -103,13 +103,15 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 	for _, ref := range resp.RetrievalResults {
 		hit := AuthorHit{}
 
-		// 1. Extract Author Name
+		// 1. Extract Author Name and Facet Label
 		if val, ok := ref.Metadata["original_facet_label"]; ok {
 			var strVal string
 			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
 				hit.Name = strVal
+				hit.FacetLabel = strVal
 			} else {
 				hit.Name = fmt.Sprintf("%v", val)
+				hit.FacetLabel = fmt.Sprintf("%v", val)
 			}
 		}
 
@@ -166,13 +168,17 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
  4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
  5. ORDERING: Return the suggestions in descending order of relevance and confidence, with the most authoritative matches first.
  6. MINIMUM VIABILITY: Prioritize authors who are likely to have multiple records. Avoid extremely niche or single-match suggestions unless they are an exact match for the query.
+ 7. ATTRIBUTION: For each suggestion, you MUST indicate the source:
+    - Use "kb" if the author was found in the Background Research.
+    - Use "llm" if the author is from your own internal knowledge.
+ 8. FACET MAPPING: If an author has a FACET provided in the Background Research, you MUST include that exact string in the 'facet' field of the output. If the author is from your internal knowledge, set 'facet' to null.
  %s
  
  IMPORTANT RULES:
  1. DO NOT use <think> tags or output internal reasoning. 
  2. DO NOT output any conversational text or formatting outside of the JSON block.
  3. If the query is a topic, suggest verified authors associated with that topic.
- 4. Each suggestion must have a 'name' (the author name) and 'reason' (a short explanation).
+ 4. Each suggestion must have a 'name' (the author name), 'reason' (a short explanation), 'facet' (canonical label), and 'source' (kb or llm).
  5. JSON INTEGRITY: You MUST escape any double quotes (") found within names or reasons using a backslash ( \"). This is critical for valid JSON parsing.
  6. CANONICAL REPRESENTATION: When a name is provided in the Background Research formatted as <<Name>>, you MUST use the exact text inside the markers as the 'name' in your output for those suggestions.
  7. Output MUST be ONLY the raw JSON object matching the following schema. NO PREAMBLE. NO CONVERSATION. START WITH '{' AND END WITH '}'.
@@ -185,7 +191,12 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
  CRITICAL: DO NOT include any introductory text (like "Okay, let's..."), markdown formatting (like triple-backtick json), or follow-up comments.
  {%s
    "suggestions": [
-      { "name": "Author Name", "reason": "Why they are relevant" }
+      { 
+        "name": "Author Name", 
+        "reason": "Why they are relevant",
+        "facet": "Last, First (Dates)",
+        "source": "kb"
+      }
    ]
  }
  START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSchema)
@@ -425,8 +436,8 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 	}
 
 	// 2. Escape internal unescaped quotes in key-value pairs (Naive but effective for LLM output)
-	// We handle name and reason fields specifically.
-	re := regexp.MustCompile(`"(name|reason)":\s*"(.*?)"(\s*[,}])`)
+	// We handle name, reason, and facet fields specifically.
+	re := regexp.MustCompile(`"(name|reason|facet)":\s*"(.*?)"(\s*[,}])`)
 	input = re.ReplaceAllStringFunc(input, func(m string) string {
 		parts := re.FindStringSubmatch(m)
 		if len(parts) < 4 {
@@ -468,9 +479,11 @@ func (p *BedrockProvider) getResponseSchema() string {
         "type": "object",
         "properties": {
           "name": { "type": "string" },
-          "reason": { "type": "string" }
+          "reason": { "type": "string" },
+          "facet": { "type": ["string", "null"] },
+          "source": { "type": "string", "enum": ["kb", "llm"] }
         },
-        "required": ["name", "reason"]
+        "required": ["name", "reason", "source"]
       }
     }
   },
@@ -489,9 +502,9 @@ func (p *BedrockProvider) formatAuthorHits(list []AuthorHit) string {
 		cleanName := strings.Trim(item.Name, "\" ") 
 		// Wrap name in markers to help the LLM identify where it starts/ends.
 		if item.Bio != "" {
-			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | BIO: %s\n", cleanName, item.Bio))
+			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | FACET: <<%s>> | BIO: %s\n", cleanName, item.FacetLabel, item.Bio))
 		} else {
-			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>>\n", cleanName))
+			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | FACET: <<%s>>\n", cleanName, item.FacetLabel))
 		}
 	}
 	return sb.String()

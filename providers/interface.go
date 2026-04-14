@@ -21,12 +21,15 @@ type AIUsage struct {
 type AIResponseSuggestion struct {
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
+	Facet  string `json:"facet,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 // AuthorHit contains an individual author hit from the Knowledge Base
 type AuthorHit struct {
-	Name string `json:"name"`
-	Bio  string `json:"bio,omitempty"`
+	Name       string `json:"name"`
+	Bio        string `json:"bio,omitempty"`
+	FacetLabel string `json:"facet_label,omitempty"`
 }
 
 // SuggestionContextData holds the gathered research from Solr and KB

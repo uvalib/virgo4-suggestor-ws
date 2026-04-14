@@ -31,6 +31,8 @@ type SuggestionContext struct {
 type Suggestion struct {
 	Type   string `json:"type"`
 	Value  string `json:"value"`
+	Facet  string `json:"facet"`
+	Source string `json:"source"`
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -309,7 +311,13 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
 				if trimmedName != "" {
-					candidates = append(candidates, Suggestion{Type: "author", Value: trimmedName, Reason: sugg.Reason})
+					candidates = append(candidates, Suggestion{
+						Type:   "author",
+						Value:  trimmedName,
+						Facet:  sugg.Facet,
+						Source: sugg.Source,
+						Reason: sugg.Reason,
+					})
 				}
 			}
 			// Only show correction if it's non-empty and DIFFERENT from the original query
@@ -328,8 +336,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		log.Printf("[CYCLE-2] No AI candidates found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
 		for _, a := range ctxData.KBAuthors {
 			candidates = append(candidates, Suggestion{
-				Type:   "author", 
+				Type:   "author",
 				Value:  a.Name,
+				Facet:  a.FacetLabel,
+				Source: "kb",
 				Reason: "Author's metadata aligns with your query",
 			})
 		}
@@ -354,6 +364,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					if !seen[canonical] {
 						seen[canonical] = true
 						c.Value = canonical // Replace candidate with exact catalog string
+						c.Facet = canonical // Populate link facet with exact catalog string
 						res.Suggestions = append(res.Suggestions, c)
 					}
 				}
