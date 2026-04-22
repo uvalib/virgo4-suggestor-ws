@@ -307,23 +307,34 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 		var c2wg sync.WaitGroup
 		hasDidYouMean := false
-		for _, f := range s.req.Features {
-			if f == "didyoumean" {
-				hasDidYouMean = true
-				break
+		hasAuthor := false
+		
+		if len(s.req.Features) == 0 {
+			// Default legacy behavior: if no features specified, we do author discovery
+			hasAuthor = true
+		} else {
+			for _, f := range s.req.Features {
+				if f == "didyoumean" {
+					hasDidYouMean = true
+				}
+				if f == "author" {
+					hasAuthor = true
+				}
 			}
 		}
 
 		// 1. Author Suggestions Branch
-		c2wg.Add(1)
-		go func() {
-			defer c2wg.Done()
-			var err error
-			aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
-			if err != nil {
-				log.Printf("[CYCLE-2] ERROR: AI suggestions failed: %s", err.Error())
-			}
-		}()
+		if hasAuthor {
+			c2wg.Add(1)
+			go func() {
+				defer c2wg.Done()
+				var err error
+				aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
+				if err != nil {
+					log.Printf("[CYCLE-2] ERROR: AI suggestions failed: %s", err.Error())
+				}
+			}()
+		}
 
 		// 2. DidYouMean Branch (Parallel)
 		if hasDidYouMean {
