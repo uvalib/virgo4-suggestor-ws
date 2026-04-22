@@ -295,18 +295,53 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	var candidates []Suggestion
-	var aiUsage providers.AIUsage
+	var aiReqUsage providers.AIUsage
 	var aiRes *providers.AIResponse
+	var dymRes *providers.AIDymResponse
+
 	if s.svc.AIProvider != nil {
 		var startCycle2 time.Time
 		if s.req.Debug {
 			startCycle2 = time.Now()
 		}
-		var err error
-		aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
-		if err != nil {
-			log.Printf("[CYCLE-2] ERROR: AI refinement failed: %s (took %v).", err.Error(), time.Since(startCycle2))
-		} else {
+
+		var c2wg sync.WaitGroup
+		hasDidYouMean := false
+		for _, f := range s.req.Features {
+			if f == "didyoumean" {
+				hasDidYouMean = true
+				break
+			}
+		}
+
+		// 1. Author Suggestions Branch
+		c2wg.Add(1)
+		go func() {
+			defer c2wg.Done()
+			var err error
+			aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
+			if err != nil {
+				log.Printf("[CYCLE-2] ERROR: AI suggestions failed: %s", err.Error())
+			}
+		}()
+
+		// 2. DidYouMean Branch (Parallel)
+		if hasDidYouMean {
+			c2wg.Add(1)
+			go func() {
+				defer c2wg.Done()
+				var err error
+				dymRes, err = s.svc.AIProvider.GetDidYouMean(rawQuery, s.req.Debug)
+				if err != nil {
+					log.Printf("[CYCLE-2] ERROR: AI DidYouMean failed: %s", err.Error())
+				}
+			}()
+		}
+
+		c2wg.Wait()
+
+		// Process Suggestions
+		if aiRes != nil {
 			log.Printf("[CYCLE-2] AI suggestions produced: count=%d (took %v)", len(aiRes.Suggestions), time.Since(startCycle2))
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
@@ -320,12 +355,18 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					})
 				}
 			}
-			// Only show correction if it's non-empty and DIFFERENT from the original query
-			if aiRes.DidYouMean != "" && !strings.EqualFold(strings.TrimSpace(aiRes.DidYouMean), strings.TrimSpace(rawQuery)) {
-				res.DidYouMean = aiRes.DidYouMean
-			}
-			aiUsage = aiRes.Usage
+			aiReqUsage.InputTokens += aiRes.Usage.InputTokens
+			aiReqUsage.OutputTokens += aiRes.Usage.OutputTokens
 		}
+
+		// Process DidYouMean
+		if dymRes != nil && dymRes.DidYouMean != "" && !strings.EqualFold(strings.TrimSpace(dymRes.DidYouMean), strings.TrimSpace(rawQuery)) {
+			res.DidYouMean = dymRes.DidYouMean
+			aiReqUsage.InputTokens += dymRes.Usage.InputTokens
+			aiReqUsage.OutputTokens += dymRes.Usage.OutputTokens
+			log.Printf("[CYCLE-2] AI DidYouMean produced: '%s'", res.DidYouMean)
+		}
+
 		if s.req.Debug {
 			cycle2Time = time.Since(startCycle2).Milliseconds()
 		}
@@ -391,9 +432,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			Cycle1TimeMS: cycle1Time,
 			Cycle2TimeMS: cycle2Time,
 			Cycle3TimeMS: 0,
-			InputTokens:  aiUsage.InputTokens,
-			OutputTokens: aiUsage.OutputTokens,
-			CostPer1K:    calculateCostPer1K(modelUsed, aiUsage.InputTokens, aiUsage.OutputTokens),
+			InputTokens:  aiReqUsage.InputTokens,
+			OutputTokens: aiReqUsage.OutputTokens,
+			CostPer1K:    calculateCostPer1K(modelUsed, aiReqUsage.InputTokens, aiReqUsage.OutputTokens),
 			Model:        modelUsed,
 		}
 		if aiRes != nil {

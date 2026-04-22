@@ -25,6 +25,14 @@ type AIResponseSuggestion struct {
 	Source string `json:"source,omitempty"`
 }
 
+// AIDymResponse represents the dedicated response for spelling correction
+type AIDymResponse struct {
+	DidYouMean  string  `json:"didYouMean"`
+	Usage       AIUsage `json:"usage,omitempty"`
+	RawOutput   string  `json:"rawOutput,omitempty"`
+	InputPrompt string  `json:"inputPrompt,omitempty"`
+}
+
 // AuthorHit contains an individual author hit from the Knowledge Base
 type AuthorHit struct {
 	Name       string `json:"name"`
@@ -42,6 +50,9 @@ type AIProvider interface {
 
 	// GetSuggestions generates search suggestions based on the user query and gathered context
 	GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error)
+
+	// GetDidYouMean generates a dedicated spelling correction/refinement for the query
+	GetDidYouMean(query string, debug bool) (*AIDymResponse, error)
 
 	// Name returns the name of the provider (e.g. "gemini", "openai")
 	Name() string

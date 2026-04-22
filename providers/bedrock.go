@@ -138,25 +138,6 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error) {
 	modelID := p.Model
-	hasDidYouMean := false
-	for _, f := range features {
-		if f == "didyoumean" {
-			hasDidYouMean = true
-		} else if strings.HasPrefix(f, "llm:") {
-			modelID = strings.TrimPrefix(f, "llm:")
-			if debug {
-				log.Printf("[DEBUG] Model override requested: %s", modelID)
-			}
-		}
-	}
-
-	didYouMeanSchema := ""
-	didYouMeanInstruction := ""
-	if hasDidYouMean {
-		didYouMeanSchema = "\n  \"didYouMean\": \"string or null\","
-		didYouMeanInstruction = "\n5. QUERY REFINEMENT: If the user's query is misspelled or can be improved, provide a corrected version in 'didYouMean'. Otherwise, set it to null."
-	}
-
 	systemPrompt := fmt.Sprintf(`You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
  
  CORE BEHAVIOR:
@@ -172,7 +153,6 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
     - Use "kb" if the author was found in the Background Research.
     - Use "llm" if the author is from your own internal knowledge.
  8. FACET MAPPING: If an author has a FACET provided in the Background Research, you MUST include that exact string in the 'facet' field of the output. If the author is from your internal knowledge, set 'facet' to null.
- %s
  
  IMPORTANT RULES:
  1. DO NOT use <think> tags or output internal reasoning. 
@@ -188,8 +168,9 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
     c) Is a conversational troll question rather than a search for literature.
     d) Explicitly promotes violence, self-harm, or illegal acts without academic context.
     Ensure that your "reason" field remains strictly objective and never includes Personal Identifiable Information (PII) like private addresses or phone numbers.
- CRITICAL: DO NOT include any introductory text (like "Okay, let's..."), markdown formatting (like triple-backtick json), or follow-up comments.
- {%s
+  CRITICAL: DO NOT include any introductory text (like "Okay, let's..."), markdown formatting (like triple-backtick json), or follow-up comments.
+ 
+ {
    "suggestions": [
       { 
         "name": "Author Name", 
@@ -199,7 +180,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
       }
    ]
  }
- START RESPONSE WITH '{' AND NOTHING ELSE.`, didYouMeanInstruction, didYouMeanSchema)
+ START RESPONSE WITH '{' AND NOTHING ELSE.`)
 
 	userPrompt := ""
 	if customPrompt == "" {
@@ -508,4 +489,87 @@ func (p *BedrockProvider) formatAuthorHits(list []AuthorHit) string {
 		}
 	}
 	return sb.String()
+}
+
+// GetDidYouMean generates a dedicated spelling correction/refinement for the query
+func (p *BedrockProvider) GetDidYouMean(query string, debug bool) (*AIDymResponse, error) {
+	systemPrompt := `You are a linguistic expert and library metadata specialist. Your goal is to provide a corrected or refined version of the user's search query if it contains misspellings, typos, or grammatical errors.
+ 
+ CORE BEHAVIOR:
+ 1. CORRECTION: If the query is misspelled (e.g. "shakesper"), return the corrected canonical version (e.g. "Shakespeare").
+ 2. REFINEMENT: If the query is poorly formatted but understandable, refine it for better search results.
+ 3. NO-OP: If the query is already correctly spelled and well-formatted, return null.
+ 4. JSON OUTPUT: You MUST return ONLY a JSON object with a single field "didYouMean".
+ 
+ { "didYouMean": "Corrected Query" } or { "didYouMean": null }
+ 
+ IMPORTANT:
+ - DO NOT include reasoning, introductions, or conversational text.
+ - DO NOT suggest authors in this response.
+ - ONLY return the raw JSON block.
+ START RESPONSE WITH '{' AND NOTHING ELSE.`
+
+	userPrompt := fmt.Sprintf("USER QUERY: \"%s\"\n\nINSTRUCTION: Refine the query for spelling and clarity. Return ONLY JSON.", query)
+
+	messages := []sdktypes.Message{
+		{
+			Role: sdktypes.ConversationRoleUser,
+			Content: []sdktypes.ContentBlock{
+				&sdktypes.ContentBlockMemberText{Value: userPrompt},
+			},
+		},
+	}
+
+	input := &bedrockruntime.ConverseInput{
+		ModelId: aws.String(p.Model), // Use the primary model for DYM to ensure high reasoning
+		System: []sdktypes.SystemContentBlock{
+			&sdktypes.SystemContentBlockMemberText{Value: systemPrompt},
+		},
+		Messages: messages,
+		InferenceConfig: &sdktypes.InferenceConfiguration{
+			MaxTokens:   aws.Int32(256),
+			Temperature: aws.Float32(0.0),
+		},
+	}
+
+	var aiDym AIDymResponse
+	startTurn := time.Now()
+	resp, err := p.BedrockRuntime.Converse(context.Background(), input)
+	durationTurn := time.Since(startTurn)
+
+	if err != nil {
+		return nil, fmt.Errorf("DYM converse error: %w", err)
+	}
+
+	output := resp.Output.(*sdktypes.ConverseOutputMemberMessage).Value
+	var finalContent string
+	for _, block := range output.Content {
+		if text, ok := block.(*sdktypes.ContentBlockMemberText); ok {
+			finalContent += text.Value
+		}
+	}
+
+	log.Printf("[DYM] RAW AI OUTPUT: %s (took %v)", finalContent, durationTurn)
+
+	// Sanitize and Parse
+	finalContent = p.sanitizeJSON(finalContent)
+	if err := json.Unmarshal([]byte(finalContent), &aiDym); err != nil {
+		// Log but don't fail the whole request for a DYM parsing error
+		log.Printf("[DYM] Failed to parse response: %v", err)
+		return &AIDymResponse{DidYouMean: ""}, nil
+	}
+
+	if debug {
+		if resp.Usage != nil {
+			aiDym.Usage = AIUsage{
+				InputTokens:  int(*resp.Usage.InputTokens),
+				OutputTokens: int(*resp.Usage.OutputTokens),
+				TotalTokens:  int(*resp.Usage.TotalTokens),
+			}
+		}
+		aiDym.InputPrompt = fmt.Sprintf("SYSTEM PROMPT:\n%s\n\nUSER PROMPT:\n%s", systemPrompt, userPrompt)
+		aiDym.RawOutput = finalContent
+	}
+
+	return &aiDym, nil
 }
