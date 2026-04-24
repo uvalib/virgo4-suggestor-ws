@@ -161,28 +161,36 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 	results := []ImageHit{}
 	for _, ref := range resp.RetrievalResults {
 		hit := ImageHit{}
+		
+		log.Printf("[KB-IMAGES] Processing hit with metadata keys: %v", reflect.ValueOf(ref.Metadata).MapKeys())
 
 		// Extract ID
 		if val, ok := ref.Metadata["id"]; ok {
 			var strVal string
-			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
 				hit.ID = strVal
+			} else {
+				hit.ID = fmt.Sprintf("%v", val)
 			}
 		}
 
 		// Extract Title
 		if val, ok := ref.Metadata["title"]; ok {
 			var strVal string
-			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
 				hit.Title = strVal
+			} else {
+				hit.Title = fmt.Sprintf("%v", val)
 			}
 		}
 
 		// Extract Collection
 		if val, ok := ref.Metadata["collection"]; ok {
 			var strVal string
-			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
 				hit.Collection = strVal
+			} else {
+				hit.Collection = fmt.Sprintf("%v", val)
 			}
 		}
 

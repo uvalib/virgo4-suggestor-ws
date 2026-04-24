@@ -412,7 +412,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 	}
 	// If AI failed or provided no results, fall back to Knowledge Base candidates
-	if len(candidates) == 0 {
+	// Only do this if authors were actually requested or if no features were specified
+	if len(candidates) == 0 && hasAuthor {
 		log.Printf("[CYCLE-2] No AI candidates found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
 		for _, a := range ctxData.KBAuthors {
 			candidates = append(candidates, Suggestion{
