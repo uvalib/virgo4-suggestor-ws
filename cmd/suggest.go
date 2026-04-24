@@ -258,34 +258,41 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 	
 	// We'll run concurrent requests (KB authors and/or KB images)
+	// Determine which features are requested
 	hasImages := false
+	hasAuthor := len(s.req.Features) == 0
 	for _, f := range s.req.Features {
 		if f == "images" {
 			hasImages = true
-			break
+		} else if f == "author" {
+			hasAuthor = true
 		}
 	}
 
 	if hasImages {
 		wg.Add(1)
 	}
-	wg.Add(1)
+	if hasAuthor {
+		wg.Add(1)
+	}
 
-	go func() {
-		defer wg.Done()
-		if s.svc.AIProvider == nil {
-			return
-		}
-		start := time.Now()
-		log.Printf("[CYCLE-1] Starting KB retrieval")
-		kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
-		if err != nil {
-			log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
-			return
-		}
-		ctxData.KBAuthors = kbResults
-		log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
-	}()
+	if hasAuthor {
+		go func() {
+			defer wg.Done()
+			if s.svc.AIProvider == nil {
+				return
+			}
+			start := time.Now()
+			log.Printf("[CYCLE-1] Starting KB retrieval")
+			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
+			if err != nil {
+				log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
+				return
+			}
+			ctxData.KBAuthors = kbResults
+			log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
+		}()
+	}
 
 	if hasImages {
 		go func() {
