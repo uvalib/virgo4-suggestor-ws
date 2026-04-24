@@ -106,24 +106,11 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		hit := AuthorHit{}
 
 		// 1. Extract Author Name and Facet Label
-		if val, ok := ref.Metadata["original_facet_label"]; ok {
-			var strVal string
-			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				hit.Name = strVal
-				hit.FacetLabel = strVal
-			} else {
-				hit.Name = fmt.Sprintf("%v", val)
-				hit.FacetLabel = fmt.Sprintf("%v", val)
-			}
-		}
+		hit.Name = p.extractMetadataString(ref.Metadata, "original_facet_label", "name")
+		hit.FacetLabel = hit.Name
 
 		// 2. Extract Author Bio
-		if val, ok := ref.Metadata["bio"]; ok {
-			var strVal string
-			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				hit.Bio = strVal
-			}
-		}
+		hit.Bio = p.extractMetadataString(ref.Metadata, "bio")
 
 		// Only include hits that have a valid name extracted from metadata.
 		// We avoid falling back to raw content text as it is often truncated by KB chunking.
@@ -140,6 +127,8 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 	if p.ImagesKnowledgeBaseID == "" {
 		return nil, nil
 	}
+
+	log.Printf("[KB-IMAGES] Querying KB [%s] with query [%s]", p.ImagesKnowledgeBaseID, query)
 
 	input := &bedrockagentruntime.RetrieveInput{
 		KnowledgeBaseId: aws.String(p.ImagesKnowledgeBaseID),
@@ -158,49 +147,74 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 		return nil, fmt.Errorf("failed to retrieve images from KB: %w", err)
 	}
 
+	log.Printf("[KB-IMAGES] Found %d raw results", len(resp.RetrievalResults))
+
 	results := []ImageHit{}
 	for _, ref := range resp.RetrievalResults {
 		hit := ImageHit{}
 		
 		log.Printf("[KB-IMAGES] Processing hit with metadata keys: %v", reflect.ValueOf(ref.Metadata).MapKeys())
 
-		// Extract ID
-		if val, ok := ref.Metadata["id"]; ok {
-			var strVal string
-			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				hit.ID = strVal
-			} else {
-				hit.ID = fmt.Sprintf("%v", val)
-			}
-		}
-
-		// Extract Title
-		if val, ok := ref.Metadata["title"]; ok {
-			var strVal string
-			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				hit.Title = strVal
-			} else {
-				hit.Title = fmt.Sprintf("%v", val)
-			}
-		}
-
-		// Extract Collection
-		if val, ok := ref.Metadata["collection"]; ok {
-			var strVal string
-			if err := val.UnmarshalSmithyDocument(&strVal); err == nil {
-				hit.Collection = strVal
-			} else {
-				hit.Collection = fmt.Sprintf("%v", val)
-			}
-		}
+		// Extract metadata with flexible key matching
+		hit.ID = p.extractMetadataString(ref.Metadata, "id")
+		hit.Title = p.extractMetadataString(ref.Metadata, "title")
+		hit.Collection = p.extractMetadataString(ref.Metadata, "collection")
 
 		// We avoid falling back to raw content text as it is often truncated by KB chunking.
-		if hit.ID != "" && hit.Title != "" {
+		// Relaxing constraints: at least one of ID or Title must be present
+		if hit.ID != "" || hit.Title != "" {
+			// If one is missing, use the other as fallback
+			if hit.ID == "" { hit.ID = "unknown" }
+			if hit.Title == "" { hit.Title = "Image Match" }
 			results = append(results, hit)
+		} else {
+			log.Printf("[KB-IMAGES] Warning: Skipping hit with empty ID and Title. Metadata: %v", ref.Metadata)
 		}
 	}
 
+	log.Printf("[KB-IMAGES] Returning %d validated results", len(results))
 	return results, nil
+}
+
+func (p *BedrockProvider) extractMetadataString(metadata map[string]types.RetrievalResultMetadataValue, keys ...string) string {
+	for _, key := range keys {
+		// Try exact match
+		if val, ok := metadata[key]; ok {
+			return p.metadataValueToString(val)
+		}
+		// Try case-insensitive match
+		for k, v := range metadata {
+			if strings.EqualFold(k, key) {
+				return p.metadataValueToString(v)
+			}
+		}
+	}
+	return ""
+}
+
+func (p *BedrockProvider) metadataValueToString(val types.RetrievalResultMetadataValue) string {
+	// 1. Try type assertion (v2 SDK standard for union members)
+	if v, ok := val.(*types.RetrievalResultMetadataValueMemberStringValue); ok {
+		return v.Value
+	}
+
+	// 2. Fallback to existing UnmarshalSmithyDocument helper (at bottom of file)
+	var strVal string
+	if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+		return strVal
+	}
+
+	// 3. Final fallback: Use reflection/Sprintf but clean up MemberStringValue formatting
+	s := fmt.Sprintf("%v", val)
+	if strings.Contains(s, "Value:") {
+		// Naive cleanup for common Sprintf output like &{Value: "..."}
+		re := regexp.MustCompile(`Value:\s*"?([^"}]*)"?`)
+		matches := re.FindStringSubmatch(s)
+		if len(matches) > 1 {
+			return matches[1]
+		}
+	}
+	return s
 }
 
 
