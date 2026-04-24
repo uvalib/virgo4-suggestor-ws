@@ -29,12 +29,13 @@ type SuggestionContext struct {
 
 // Suggestion contains data for a single suggestion
 type Suggestion struct {
-	Type   string `json:"type"`
-	Value  string `json:"value"`
-	Facet  string `json:"facet"`
-	IIIFID string `json:"iiif_id,omitempty"`
-	Source string `json:"source"`
-	Reason string `json:"reason,omitempty"`
+	Type   string  `json:"type"`
+	Value  string  `json:"value"`
+	Facet  string  `json:"facet"`
+	IIIFID string  `json:"iiif_id,omitempty"`
+	Source string  `json:"source"`
+	Reason string  `json:"reason,omitempty"`
+	Score  float64 `json:"score,omitempty"`
 }
 
 // SuggestionRequest defines the format of a suggestion request
@@ -285,7 +286,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}
 			start := time.Now()
 			log.Printf("[CYCLE-1] Starting KB retrieval")
-			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
+			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 20)
 			if err != nil {
 				log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return
@@ -303,7 +304,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}
 			start := time.Now()
 			log.Printf("[CYCLE-1] Starting Image KB retrieval")
-			imageResults, err := s.svc.AIProvider.RetrieveImages(rawQuery, 10)
+			imageResults, err := s.svc.AIProvider.RetrieveImages(rawQuery, 20)
 			if err != nil {
 				log.Printf("[CYCLE-1] Image KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return
@@ -445,6 +446,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				IIIFID: img.IIIFID,
 				Source: "kb",
 				Reason: "Image matches your search query",
+				Score:  img.Score,
 			})
 		}
 	}

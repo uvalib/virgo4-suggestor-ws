@@ -161,6 +161,9 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 		hit.IIIFID = p.extractMetadataString(ref.Metadata, "iiif_id")
 		hit.Title = p.extractMetadataString(ref.Metadata, "title", "title_a")
 		hit.Collection = p.extractMetadataString(ref.Metadata, "collection", "digital_collection_a")
+		if ref.Score != nil {
+			hit.Score = *ref.Score
+		}
 
 		log.Printf("[KB-IMAGES] Result [%d] extracted: ID=[%s], Title=[%s]", i, hit.ID, hit.Title)
 

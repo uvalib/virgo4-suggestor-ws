@@ -41,11 +41,12 @@ type AuthorHit struct {
 
 // ImageHit contains metadata for an image from the Knowledge Base
 type ImageHit struct {
-	ID         string `json:"id"`
-	IIIFID     string `json:"iiif_id,omitempty"`
-	Title      string `json:"title"`
-	Collection string `json:"collection,omitempty"`
-	URL        string `json:"url,omitempty"`
+	ID         string  `json:"id"`
+	IIIFID     string  `json:"iiif_id,omitempty"`
+	Title      string  `json:"title"`
+	Collection string  `json:"collection,omitempty"`
+	URL        string  `json:"url,omitempty"`
+	Score      float64 `json:"score,omitempty"`
 }
 
 // SuggestionContextData holds the gathered research from Solr and KB
