@@ -257,7 +257,18 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		startCycle1 = time.Now()
 	}
 	
-	// We'll run 1 concurrent request (KB only)
+	// We'll run concurrent requests (KB authors and/or KB images)
+	hasImages := false
+	for _, f := range s.req.Features {
+		if f == "images" {
+			hasImages = true
+			break
+		}
+	}
+
+	if hasImages {
+		wg.Add(1)
+	}
 	wg.Add(1)
 
 	go func() {
@@ -275,6 +286,24 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		ctxData.KBAuthors = kbResults
 		log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
 	}()
+
+	if hasImages {
+		go func() {
+			defer wg.Done()
+			if s.svc.AIProvider == nil {
+				return
+			}
+			start := time.Now()
+			log.Printf("[CYCLE-1] Starting Image KB retrieval")
+			imageResults, err := s.svc.AIProvider.RetrieveImages(rawQuery, 10)
+			if err != nil {
+				log.Printf("[CYCLE-1] Image KB warning: %s (took %v)", err.Error(), time.Since(start))
+				return
+			}
+			ctxData.KBImages = imageResults
+			log.Printf("[CYCLE-1] Finished Image KB retrieval (took %v)", time.Since(start))
+		}()
+	}
 
 
 	done := make(chan struct{})
@@ -382,7 +411,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			cycle2Time = time.Since(startCycle2).Milliseconds()
 		}
 	}
-	
 	// If AI failed or provided no results, fall back to Knowledge Base candidates
 	if len(candidates) == 0 {
 		log.Printf("[CYCLE-2] No AI candidates found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
@@ -393,6 +421,20 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				Facet:  a.FacetLabel,
 				Source: "kb",
 				Reason: "Author's metadata aligns with your query",
+			})
+		}
+	}
+
+	// Always add Image candidates if requested and found
+	if hasImages && len(ctxData.KBImages) > 0 {
+		log.Printf("[CYCLE-2] Adding %d KB image hits.", len(ctxData.KBImages))
+		for _, img := range ctxData.KBImages {
+			candidates = append(candidates, Suggestion{
+				Type:   "image",
+				Value:  img.Title,
+				Facet:  img.ID,
+				Source: "kb",
+				Reason: "Image matches your search query",
 			})
 		}
 	}

@@ -55,8 +55,9 @@ type serviceConfigAI struct {
 	Key              string `json:"key,omitempty"`
 	URL              string `json:"url,omitempty"`
 	Model            string `json:"model,omitempty"`
-	KnowledgeBaseID  string `json:"knowledge_base_id,omitempty"`
-	GuardrailID      string `json:"guardrail_id,omitempty"`
+	KnowledgeBaseID        string `json:"knowledge_base_id,omitempty"`
+	ImagesKnowledgeBaseID  string `json:"images_knowledge_base_id,omitempty"`
+	GuardrailID            string `json:"guardrail_id,omitempty"`
 	GuardrailVersion string `json:"guardrail_version,omitempty"`
 }
 
@@ -137,6 +138,9 @@ func loadConfig() *serviceConfig {
 	if kbID := os.Getenv(envPrefix + "_BEDROCK_KB_ID"); kbID != "" {
 		cfg.AI.KnowledgeBaseID = kbID
 	}
+	if imgKbID := os.Getenv(envPrefix + "_IMAGES_KB_ID"); imgKbID != "" {
+		cfg.AI.ImagesKnowledgeBaseID = imgKbID
+	}
 	if grID := os.Getenv(envPrefix + "_GUARDRAIL_ID"); grID != "" {
 		cfg.AI.GuardrailID = grID
 	}
@@ -153,6 +157,9 @@ func loadConfig() *serviceConfig {
 	}
 	if cfg.AI.KnowledgeBaseID == "" {
 		cfg.AI.KnowledgeBaseID = "ANITQDQQXN"
+	}
+	if cfg.AI.ImagesKnowledgeBaseID == "" {
+		cfg.AI.ImagesKnowledgeBaseID = "J34YBBVTGA"
 	}
 	if cfg.AI.GuardrailID == "" {
 		cfg.AI.GuardrailID = "sii0rl6seb24"

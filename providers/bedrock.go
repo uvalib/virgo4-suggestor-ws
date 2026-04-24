@@ -24,8 +24,9 @@ import (
 type BedrockProvider struct {
 	Region           string
 	Model            string
-	KnowledgeBaseID  string
-	GuardrailID      string
+	KnowledgeBaseID       string
+	ImagesKnowledgeBaseID string
+	GuardrailID           string
 	GuardrailVersion string
 	Config           aws.Config
 	BedrockRuntime   *bedrockruntime.Client
@@ -33,7 +34,7 @@ type BedrockProvider struct {
 }
 
 // NewBedrockProvider will instantiate a new AI provider using bedrock SDK
-func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string, guardrailVersion string, client *http.Client) (*BedrockProvider, error) {
+func NewBedrockProvider(model string, knowledgeBaseID string, imagesKnowledgeBaseID string, guardrailID string, guardrailVersion string, client *http.Client) (*BedrockProvider, error) {
 	// Restore Kimi K2.5 as the primary model.
 	bedrockModel := "moonshotai.kimi-k2.5"
 	if model != "" {
@@ -54,9 +55,10 @@ func NewBedrockProvider(model string, knowledgeBaseID string, guardrailID string
 	}
 
 	return &BedrockProvider{
-		Region:           cfg.Region,
-		Model:            bedrockModel,
-		KnowledgeBaseID:  knowledgeBaseID,
+		Region:                cfg.Region,
+		Model:                 bedrockModel,
+		KnowledgeBaseID:       knowledgeBaseID,
+		ImagesKnowledgeBaseID: imagesKnowledgeBaseID,
 		// Guardrails disabled temporarily for debugging (per user request)
 		GuardrailID:      "", 
 		GuardrailVersion: "",
@@ -126,6 +128,66 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		// Only include hits that have a valid name extracted from metadata.
 		// We avoid falling back to raw content text as it is often truncated by KB chunking.
 		if hit.Name != "" {
+			results = append(results, hit)
+		}
+	}
+
+	return results, nil
+}
+
+// RetrieveImages will query the Bedrock Knowledge Base and return relevant image metadata
+func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, error) {
+	if p.ImagesKnowledgeBaseID == "" {
+		return nil, nil
+	}
+
+	input := &bedrockagentruntime.RetrieveInput{
+		KnowledgeBaseId: aws.String(p.ImagesKnowledgeBaseID),
+		RetrievalQuery: &types.KnowledgeBaseQuery{
+			Text: aws.String(query),
+		},
+		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
+			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
+				NumberOfResults: aws.Int32(int32(limit)),
+			},
+		},
+	}
+
+	resp, err := p.BedrockAgent.Retrieve(context.TODO(), input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve images from KB: %w", err)
+	}
+
+	results := []ImageHit{}
+	for _, ref := range resp.RetrievalResults {
+		hit := ImageHit{}
+
+		// Extract ID
+		if val, ok := ref.Metadata["id"]; ok {
+			var strVal string
+			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+				hit.ID = strVal
+			}
+		}
+
+		// Extract Title
+		if val, ok := ref.Metadata["title"]; ok {
+			var strVal string
+			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+				hit.Title = strVal
+			}
+		}
+
+		// Extract Collection
+		if val, ok := ref.Metadata["collection"]; ok {
+			var strVal string
+			if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
+				hit.Collection = strVal
+			}
+		}
+
+		// We avoid falling back to raw content text as it is often truncated by KB chunking.
+		if hit.ID != "" && hit.Title != "" {
 			results = append(results, hit)
 		}
 	}

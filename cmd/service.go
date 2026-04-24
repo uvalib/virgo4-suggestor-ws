@@ -104,7 +104,7 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	// Initialize AI Provider
 	if cfg.AI.Provider == "bedrock" {
 		log.Printf("[SERVICE] initializing AWS Bedrock AI provider with Guardrail %s", cfg.AI.GuardrailID)
-		aiProvider, err := providers.NewBedrockProvider(cfg.AI.Model, cfg.AI.KnowledgeBaseID, cfg.AI.GuardrailID, cfg.AI.GuardrailVersion, httpClientWithTimeouts("10", "30"))
+		aiProvider, err := providers.NewBedrockProvider(cfg.AI.Model, cfg.AI.KnowledgeBaseID, cfg.AI.ImagesKnowledgeBaseID, cfg.AI.GuardrailID, cfg.AI.GuardrailVersion, httpClientWithTimeouts("10", "30"))
 		if err != nil {
 			log.Printf("[SERVICE] FATAL: %s", err.Error())
 		} else {

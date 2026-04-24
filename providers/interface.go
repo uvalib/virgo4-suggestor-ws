@@ -33,16 +33,24 @@ type AIDymResponse struct {
 	InputPrompt string  `json:"inputPrompt,omitempty"`
 }
 
-// AuthorHit contains an individual author hit from the Knowledge Base
 type AuthorHit struct {
 	Name       string `json:"name"`
 	Bio        string `json:"bio,omitempty"`
 	FacetLabel string `json:"facet_label,omitempty"`
 }
 
+// ImageHit contains metadata for an image from the Knowledge Base
+type ImageHit struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Collection string `json:"collection,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
 // SuggestionContextData holds the gathered research from Solr and KB
 type SuggestionContextData struct {
 	KBAuthors []AuthorHit
+	KBImages  []ImageHit
 }
 
 // AIProvider defines the interface for different AI backends
@@ -60,6 +68,9 @@ type AIProvider interface {
 	// GetModel returns the specific model ID being used
 	GetModel() string
 
-	// Retrieve will query the provider's Knowledge Base (if supported) and return relevant metadata
+	// Retrieve will query the provider's default Knowledge Base and return relevant author metadata
 	Retrieve(query string, limit int) ([]AuthorHit, error)
+
+	// RetrieveImages will query the provider's Image Knowledge Base and return relevant image metadata
+	RetrieveImages(query string, limit int) ([]ImageHit, error)
 }
