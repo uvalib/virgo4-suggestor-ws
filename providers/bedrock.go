@@ -91,7 +91,8 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults: aws.Int32(int32(limit)),
+				NumberOfResults:    aws.Int32(int32(limit)),
+				OverrideSearchType: types.SearchTypeHybrid,
 			},
 		},
 	}
@@ -137,7 +138,8 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults: aws.Int32(int32(limit)),
+				NumberOfResults:    aws.Int32(int32(limit)),
+				OverrideSearchType: types.SearchTypeHybrid,
 			},
 		},
 	}
@@ -147,18 +149,21 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 		return nil, fmt.Errorf("failed to retrieve images from KB: %w", err)
 	}
 
-	log.Printf("[KB-IMAGES] Found %d raw results", len(resp.RetrievalResults))
+	log.Printf("[KB-IMAGES] Found %d raw results from KB [%s]", len(resp.RetrievalResults), p.ImagesKnowledgeBaseID)
 
 	results := []ImageHit{}
-	for _, ref := range resp.RetrievalResults {
+	for i, ref := range resp.RetrievalResults {
 		hit := ImageHit{}
 		
-		log.Printf("[KB-IMAGES] Processing hit with metadata keys: %v", reflect.ValueOf(ref.Metadata).MapKeys())
+		log.Printf("[KB-IMAGES] Result [%d] raw metadata: %v", i, ref.Metadata)
+		log.Printf("[KB-IMAGES] Result [%d] content snippet: %v", i, ref.Content.Text)
 
 		// Extract metadata with flexible key matching
-		hit.ID = p.extractMetadataString(ref.Metadata, "id")
-		hit.Title = p.extractMetadataString(ref.Metadata, "title")
-		hit.Collection = p.extractMetadataString(ref.Metadata, "collection")
+		hit.ID = p.extractMetadataString(ref.Metadata, "id", "image_id")
+		hit.Title = p.extractMetadataString(ref.Metadata, "title", "title_a")
+		hit.Collection = p.extractMetadataString(ref.Metadata, "collection", "digital_collection_a")
+
+		log.Printf("[KB-IMAGES] Result [%d] extracted: ID=[%s], Title=[%s]", i, hit.ID, hit.Title)
 
 		// We avoid falling back to raw content text as it is often truncated by KB chunking.
 		// Relaxing constraints: at least one of ID or Title must be present
@@ -176,35 +181,46 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 	return results, nil
 }
 
-func (p *BedrockProvider) extractMetadataString(metadata map[string]types.RetrievalResultMetadataValue, keys ...string) string {
+func (p *BedrockProvider) extractMetadataString(metadata interface{}, keys ...string) string {
+	if metadata == nil {
+		return ""
+	}
+
+	// Use reflection to handle different map types in different SDK versions
+	mv := reflect.ValueOf(metadata)
+	if mv.Kind() != reflect.Map {
+		return ""
+	}
+
 	for _, key := range keys {
 		// Try exact match
-		if val, ok := metadata[key]; ok {
-			return p.metadataValueToString(val)
+		kv := reflect.ValueOf(key)
+		val := mv.MapIndex(kv)
+		if val.IsValid() {
+			return p.metadataValueToString(val.Interface())
 		}
 		// Try case-insensitive match
-		for k, v := range metadata {
-			if strings.EqualFold(k, key) {
-				return p.metadataValueToString(v)
+		for _, k := range mv.MapKeys() {
+			if strings.EqualFold(fmt.Sprintf("%v", k.Interface()), key) {
+				return p.metadataValueToString(mv.MapIndex(k).Interface())
 			}
 		}
 	}
 	return ""
 }
 
-func (p *BedrockProvider) metadataValueToString(val types.RetrievalResultMetadataValue) string {
-	// 1. Try type assertion (v2 SDK standard for union members)
-	if v, ok := val.(*types.RetrievalResultMetadataValueMemberStringValue); ok {
-		return v.Value
+func (p *BedrockProvider) metadataValueToString(val interface{}) string {
+	if val == nil {
+		return ""
 	}
 
-	// 2. Fallback to existing UnmarshalSmithyDocument helper (at bottom of file)
+	// 1. Try to unmarshal using smithy document helper
 	var strVal string
 	if err := p.UnmarshalSmithyDocument(val, &strVal); err == nil {
 		return strVal
 	}
 
-	// 3. Final fallback: Use reflection/Sprintf but clean up MemberStringValue formatting
+	// 2. Final fallback: Use reflection/Sprintf but clean up MemberStringValue/document formatting
 	s := fmt.Sprintf("%v", val)
 	if strings.Contains(s, "Value:") {
 		// Naive cleanup for common Sprintf output like &{Value: "..."}
