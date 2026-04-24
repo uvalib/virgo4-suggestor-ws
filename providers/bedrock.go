@@ -91,8 +91,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults:    aws.Int32(int32(limit)),
-				OverrideSearchType: types.SearchTypeHybrid,
+				NumberOfResults: aws.Int32(int32(limit)),
 			},
 		},
 	}
@@ -138,8 +137,7 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults:    aws.Int32(int32(limit)),
-				OverrideSearchType: types.SearchTypeHybrid,
+				NumberOfResults: aws.Int32(int32(limit)),
 			},
 		},
 	}
