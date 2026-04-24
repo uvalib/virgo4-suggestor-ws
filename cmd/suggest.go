@@ -452,6 +452,15 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			vwg.Add(1)
 			go func(c Suggestion) {
 				defer vwg.Done()
+				if c.Type == "image" {
+					mu.Lock()
+					defer mu.Unlock()
+					if !seen[c.Facet] {
+						seen[c.Facet] = true
+						res.Suggestions = append(res.Suggestions, c)
+					}
+					return
+				}
 				if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 					mu.Lock()
 					defer mu.Unlock()
