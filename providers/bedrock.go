@@ -158,6 +158,7 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 
 		// Extract metadata with flexible key matching
 		hit.ID = p.extractMetadataString(ref.Metadata, "id", "image_id")
+		hit.IIIFID = p.extractMetadataString(ref.Metadata, "iiif_id")
 		hit.Title = p.extractMetadataString(ref.Metadata, "title", "title_a")
 		hit.Collection = p.extractMetadataString(ref.Metadata, "collection", "digital_collection_a")
 

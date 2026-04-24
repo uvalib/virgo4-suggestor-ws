@@ -32,6 +32,7 @@ type Suggestion struct {
 	Type   string `json:"type"`
 	Value  string `json:"value"`
 	Facet  string `json:"facet"`
+	IIIFID string `json:"iiif_id,omitempty"`
 	Source string `json:"source"`
 	Reason string `json:"reason,omitempty"`
 }
@@ -441,6 +442,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				Type:   "image",
 				Value:  img.Title,
 				Facet:  img.ID,
+				IIIFID: img.IIIFID,
 				Source: "kb",
 				Reason: "Image matches your search query",
 			})
