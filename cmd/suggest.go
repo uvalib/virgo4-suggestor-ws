@@ -50,6 +50,8 @@ type SuggestionRequest struct {
 type SuggestionResponse struct {
 	DidYouMean  string              `json:"did_you_mean,omitempty"`
 	Suggestions []Suggestion        `json:"suggestions"`
+	Authors     []Suggestion        `json:"authors"`
+	Images      []Suggestion        `json:"images"`
 	Metadata    *SuggestionMetadata `json:"metadata,omitempty"`
 }
 
@@ -469,6 +471,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					defer mu.Unlock()
 					if !seen[c.Facet] {
 						seen[c.Facet] = true
+						res.Images = append(res.Images, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
 					return
@@ -480,6 +483,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						seen[canonical] = true
 						c.Value = canonical // Replace candidate with exact catalog string
 						c.Facet = canonical // Populate link facet with exact catalog string
+						res.Authors = append(res.Authors, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
 				}
