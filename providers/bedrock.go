@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,8 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		return nil, fmt.Errorf("failed to retrieve from KB: %w", err)
 	}
 
+	const minScoreThreshold = 0.5
+
 	results := []AuthorHit{}
 	for _, ref := range resp.RetrievalResults {
 		hit := AuthorHit{}
@@ -112,6 +115,11 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		// 2. Extract Author Bio
 		hit.Bio = p.extractMetadataString(ref.Metadata, "bio")
 
+		// 3. Capture retrieval confidence score
+		if ref.Score != nil {
+			hit.Score = *ref.Score
+		}
+
 		// Only include hits that have a valid name extracted from metadata.
 		// We avoid falling back to raw content text as it is often truncated by KB chunking.
 		if hit.Name != "" {
@@ -119,7 +127,24 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		}
 	}
 
-	return results, nil
+	// Sort by score descending so the most relevant hits are first
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Filter out low-confidence hits below the threshold
+	filtered := make([]AuthorHit, 0, len(results))
+	for _, hit := range results {
+		if hit.Score >= minScoreThreshold {
+			filtered = append(filtered, hit)
+		} else {
+			log.Printf("[KB] Dropping low-score author hit: '%s' (score=%.3f < %.1f)", hit.Name, hit.Score, minScoreThreshold)
+		}
+	}
+
+	log.Printf("[KB] Author results: %d raw -> %d after score filter (threshold=%.1f)", len(results), len(filtered), minScoreThreshold)
+
+	return filtered, nil
 }
 
 // RetrieveImages will query the Bedrock Knowledge Base and return relevant image metadata
@@ -578,6 +603,9 @@ func (p *BedrockProvider) formatAuthorHits(list []AuthorHit) string {
 	if len(list) == 0 {
 		return "[]"
 	}
+
+	const maxBioLength = 1000
+
 	var sb strings.Builder
 	for _, item := range list {
 		// Clean the name of leading/trailing quotes that might be in metadata, 
@@ -585,7 +613,11 @@ func (p *BedrockProvider) formatAuthorHits(list []AuthorHit) string {
 		cleanName := strings.Trim(item.Name, "\" ") 
 		// Wrap name in markers to help the LLM identify where it starts/ends.
 		if item.Bio != "" {
-			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | FACET: <<%s>> | BIO: %s\n", cleanName, item.FacetLabel, item.Bio))
+			bio := item.Bio
+			if len(bio) > maxBioLength {
+				bio = bio[:maxBioLength] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | FACET: <<%s>> | BIO: %s\n", cleanName, item.FacetLabel, bio))
 		} else {
 			sb.WriteString(fmt.Sprintf("- AUTHOR: <<%s>> | FACET: <<%s>>\n", cleanName, item.FacetLabel))
 		}

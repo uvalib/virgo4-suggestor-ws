@@ -288,7 +288,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}
 			start := time.Now()
 			log.Printf("[CYCLE-1] Starting KB retrieval")
-			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 20)
+			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
 			if err != nil {
 				log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return

@@ -34,9 +34,10 @@ type AIDymResponse struct {
 }
 
 type AuthorHit struct {
-	Name       string `json:"name"`
-	Bio        string `json:"bio,omitempty"`
-	FacetLabel string `json:"facet_label,omitempty"`
+	Name       string  `json:"name"`
+	Bio        string  `json:"bio,omitempty"`
+	FacetLabel string  `json:"facet_label,omitempty"`
+	Score      float64 `json:"score,omitempty"`
 }
 
 // ImageHit contains metadata for an image from the Knowledge Base
