@@ -346,8 +346,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 
 		var c2wg sync.WaitGroup
-		hasDidYouMean := false
-		hasAuthor := false
+		hasDidYouMean = false
+		hasAuthor = false
 		
 		if len(s.req.Features) == 0 {
 			// Default legacy behavior: if no features specified, we do author discovery
@@ -357,7 +357,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				if f == "didyoumean" {
 					hasDidYouMean = true
 				}
-				if f == "author" {
+				if f == "author" || f == "kb-only" {
 					hasAuthor = true
 				}
 			}
@@ -469,8 +469,13 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				if c.Type == "image" {
 					mu.Lock()
 					defer mu.Unlock()
-					if !seen[c.Facet] {
-						seen[c.Facet] = true
+					// Deduplicate based on IIIF ID if available, otherwise fallback to Facet (ID)
+					key := c.Facet
+					if c.IIIFID != "" {
+						key = c.IIIFID
+					}
+					if !seen[key] {
+						seen[key] = true
 						res.Images = append(res.Images, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
