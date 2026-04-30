@@ -265,6 +265,31 @@ func (p *BedrockProvider) metadataValueToString(val interface{}) string {
 // GetSuggestions uses the Bedrock Converse API with Tool Use (Function Calling)
 func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error) {
 	modelID := p.Model
+	// Check for KB-only mode
+	kbOnly := false
+	for _, f := range features {
+		if f == "kb-only" {
+			kbOnly = true
+			break
+		}
+	}
+
+	if kbOnly {
+		log.Printf("[AGENT] KB-only mode enabled. Skipping LLM synthesis.")
+		var suggestions []AIResponseSuggestion
+		for _, a := range suggContext.KBAuthors {
+			suggestions = append(suggestions, AIResponseSuggestion{
+				Name:   a.Name,
+				Facet:  a.FacetLabel,
+				Source: "kb",
+				Reason: "", // Return results without any reason as requested
+			})
+		}
+		return &AIResponse{
+			Suggestions: suggestions,
+		}, nil
+	}
+
 	systemPrompt := fmt.Sprintf(`You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
  
  CORE BEHAVIOR:
