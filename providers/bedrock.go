@@ -80,7 +80,7 @@ func (p *BedrockProvider) GetModel() string {
 }
 
 // Retrieve will query the Bedrock Knowledge Base and return relevant author metadata
-func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error) {
+func (p *BedrockProvider) Retrieve(query string, limit int, threshold float64) ([]AuthorHit, error) {
 	if p.KnowledgeBaseID == "" {
 		return nil, nil
 	}
@@ -102,7 +102,10 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		return nil, fmt.Errorf("failed to retrieve from KB: %w", err)
 	}
 
-	const minScoreThreshold = 0.3
+	minScoreThreshold := threshold
+	if minScoreThreshold <= 0 {
+		minScoreThreshold = 0.3 // default if not provided
+	}
 
 	results := []AuthorHit{}
 	for _, ref := range resp.RetrievalResults {
@@ -148,7 +151,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 }
 
 // RetrieveImages will query the Bedrock Knowledge Base and return relevant image metadata
-func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, error) {
+func (p *BedrockProvider) RetrieveImages(query string, limit int, threshold float64) ([]ImageHit, error) {
 	if p.ImagesKnowledgeBaseID == "" {
 		return nil, nil
 	}
@@ -174,6 +177,9 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 
 	log.Printf("[KB-IMAGES] Found %d raw results from KB [%s]", len(resp.RetrievalResults), p.ImagesKnowledgeBaseID)
 
+	minScoreThreshold := threshold
+	// No default for images if not provided, we keep it liberal unless specified.
+	
 	results := []ImageHit{}
 	for i, ref := range resp.RetrievalResults {
 		hit := ImageHit{}
@@ -192,13 +198,14 @@ func (p *BedrockProvider) RetrieveImages(query string, limit int) ([]ImageHit, e
 
 		log.Printf("[KB-IMAGES] Result [%d] extracted: ID=[%s], Title=[%s]", i, hit.ID, hit.Title)
 
-		// We avoid falling back to raw content text as it is often truncated by KB chunking.
 		// Relaxing constraints: at least one of ID or Title must be present
-		if hit.ID != "" || hit.Title != "" {
+		if (hit.ID != "" || hit.Title != "") && hit.Score >= minScoreThreshold {
 			// If one is missing, use the other as fallback
 			if hit.ID == "" { hit.ID = "unknown" }
 			if hit.Title == "" { hit.Title = "Image Match" }
 			results = append(results, hit)
+		} else if hit.Score < minScoreThreshold {
+			log.Printf("[KB-IMAGES] Dropping low-score image hit: '%s' (score=%.3f < %.3f)", hit.Title, hit.Score, minScoreThreshold)
 		} else {
 			log.Printf("[KB-IMAGES] Warning: Skipping hit with empty ID and Title. Metadata: %v", ref.Metadata)
 		}

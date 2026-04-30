@@ -44,6 +44,8 @@ type SuggestionRequest struct {
 	AIPrompt string   `json:"aiPrompt"`
 	Debug    bool     `json:"debug"`
 	Features []string `json:"features"`
+	AuthorThreshold float64 `json:"authorThreshold"`
+	ImageThreshold  float64 `json:"imageThreshold"`
 }
 
 // SuggestionResponse contains the full set of suggestions
@@ -287,8 +289,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			start := time.Now()
-			log.Printf("[CYCLE-1] Starting KB retrieval")
-			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10)
+			log.Printf("[CYCLE-1] Starting KB retrieval (threshold=%.2f)", s.req.AuthorThreshold)
+			kbResults, err := s.svc.AIProvider.Retrieve(rawQuery, 10, s.req.AuthorThreshold)
 			if err != nil {
 				log.Printf("[CYCLE-1] KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return
@@ -305,8 +307,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			start := time.Now()
-			log.Printf("[CYCLE-1] Starting Image KB retrieval")
-			imageResults, err := s.svc.AIProvider.RetrieveImages(rawQuery, 20)
+			log.Printf("[CYCLE-1] Starting Image KB retrieval (threshold=%.2f)", s.req.ImageThreshold)
+			imageResults, err := s.svc.AIProvider.RetrieveImages(rawQuery, 20, s.req.ImageThreshold)
 			if err != nil {
 				log.Printf("[CYCLE-1] Image KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return

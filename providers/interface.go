@@ -72,8 +72,8 @@ type AIProvider interface {
 	GetModel() string
 
 	// Retrieve will query the provider's default Knowledge Base and return relevant author metadata
-	Retrieve(query string, limit int) ([]AuthorHit, error)
+	Retrieve(query string, limit int, threshold float64) ([]AuthorHit, error)
 
 	// RetrieveImages will query the provider's Image Knowledge Base and return relevant image metadata
-	RetrieveImages(query string, limit int) ([]ImageHit, error)
+	RetrieveImages(query string, limit int, threshold float64) ([]ImageHit, error)
 }
