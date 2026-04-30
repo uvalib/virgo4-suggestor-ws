@@ -268,7 +268,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
 	systemPrompt := fmt.Sprintf(`You are an expert academic librarian. Your goal is to provide high-quality AUTHOR name suggestions based on the user's query and the provided Background Research.
  
  CORE BEHAVIOR:
- 1. CANONICAL NAMES: Always return the full, recognized name of the primary author in "Last, First" format (e.g., "Shakespeare, William").
+ 1. CANONICAL NAMES: Always return the full, recognized name of the primary author in "Last, First" format (e.g., "Doe, John").
  2. DIVERSITY & MIXTURE: Provide a diverse list of up to 20 suggestions. This MUST include:
     - The primary canonical author(s) mapped from the query.
     - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
@@ -630,7 +630,7 @@ func (p *BedrockProvider) GetDidYouMean(query string, debug bool) (*AIDymRespons
 	systemPrompt := `You are a linguistic expert and library metadata specialist. Your goal is to provide a corrected or refined version of the user's search query if it contains misspellings, typos, or grammatical errors.
  
  CORE BEHAVIOR:
- 1. CORRECTION: If the query is misspelled (e.g. "shakesper"), return the corrected canonical version (e.g. "Shakespeare").
+ 1. CORRECTION: If the query is misspelled (e.g. "heminway"), return the corrected canonical version (e.g. "Hemingway").
  2. REFINEMENT: If the query is poorly formatted but understandable, refine it for better search results.
  3. NO-OP: If the query is already correctly spelled and well-formatted, return null.
  4. JSON OUTPUT: You MUST return ONLY a JSON object with a single field "didYouMean".
