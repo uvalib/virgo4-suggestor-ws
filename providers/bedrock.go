@@ -102,7 +102,7 @@ func (p *BedrockProvider) Retrieve(query string, limit int) ([]AuthorHit, error)
 		return nil, fmt.Errorf("failed to retrieve from KB: %w", err)
 	}
 
-	const minScoreThreshold = 0.5
+	const minScoreThreshold = 0.3
 
 	results := []AuthorHit{}
 	for _, ref := range resp.RetrievalResults {
