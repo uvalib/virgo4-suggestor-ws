@@ -476,6 +476,31 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					}
 					return
 				}
+				
+				// For KB-only mode, we skip verification and trust the Knowledge Base results
+				// to avoid filtering out valid items due to strict Solr matching.
+				kbOnly := false
+				for _, f := range s.req.Features {
+					if f == "kb-only" {
+						kbOnly = true
+						break
+					}
+				}
+
+				if kbOnly && c.Source == "kb" {
+					mu.Lock()
+					defer mu.Unlock()
+					if !seen[c.Value] {
+						seen[c.Value] = true
+						if c.Facet == "" {
+							c.Facet = c.Value
+						}
+						res.Authors = append(res.Authors, c)
+						res.Suggestions = append(res.Suggestions, c)
+					}
+					return
+				}
+
 				if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 					mu.Lock()
 					defer mu.Unlock()
