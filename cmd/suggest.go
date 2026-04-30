@@ -268,7 +268,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	for _, f := range s.req.Features {
 		if f == "images" {
 			hasImages = true
-		} else if f == "author" {
+		} else if f == "author" || f == "kb-only" {
 			hasAuthor = true
 		}
 	}
