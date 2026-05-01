@@ -622,9 +622,10 @@ func (p *BedrockProvider) getResponseSchema() string {
           "name": { "type": "string" },
           "reason": { "type": "string" },
           "facet": { "type": ["string", "null"] },
-          "source": { "type": "string", "enum": ["kb", "llm"] }
+          "source": { "type": "string", "enum": ["kb", "llm"] },
+          "score": { "type": "number" }
         },
-        "required": ["name", "reason", "source"]
+        "required": ["name", "reason", "source", "score"]
       }
     }
   },
