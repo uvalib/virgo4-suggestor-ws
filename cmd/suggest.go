@@ -435,6 +435,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				Value:  a.Name,
 				Facet:  a.FacetLabel,
 				Source: "kb",
+				Score:  a.Score,
 				Reason: "Author's metadata aligns with your query",
 			})
 		}
