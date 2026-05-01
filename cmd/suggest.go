@@ -395,21 +395,24 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						Score:  sugg.Score,
 					}
 					
-					// If the LLM didn't provide a score (which is typical), try to recover it from our KB hits
-					if cand.Score <= 0 {
-						for _, kbAuth := range ctxData.KBAuthors {
-							// More robust name matching (trim common catalog suffixes like periods)
-							cleanKB := strings.TrimRight(strings.TrimSpace(kbAuth.Name), ".")
-							cleanCand := strings.TrimRight(trimmedName, ".")
+					// Always verify the LLM's output against the actual KB hits to prevent hallucinations and misattribution
+					hasMatch := false
+					for _, kbAuth := range ctxData.KBAuthors {
+						// More robust name matching (trim common catalog suffixes like periods)
+						cleanKB := strings.TrimRight(strings.TrimSpace(kbAuth.Name), ".")
+						cleanCand := strings.TrimRight(trimmedName, ".")
 
-							if strings.EqualFold(cleanKB, cleanCand) {
-								cand.Score = kbAuth.Score
-								if cand.Source == "" || cand.Source == "llm" {
-									cand.Source = "kb" // It's a match, so it's KB sourced
-								}
-								break
-							}
+						if strings.EqualFold(cleanKB, cleanCand) {
+							cand.Score = kbAuth.Score
+							cand.Source = "kb" // Force correct attribution
+							hasMatch = true
+							break
 						}
+					}
+					
+					if !hasMatch {
+						cand.Score = 0.0 // Strip any hallucinated scores
+						cand.Source = "llm" // Force correct attribution
 					}
 					candidates = append(candidates, cand)
 				}
