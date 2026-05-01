@@ -405,6 +405,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						Facet:  sugg.Facet,
 						Source: sugg.Source,
 						Reason: sugg.Reason,
+						Score:  sugg.Score,
 					})
 				}
 			}

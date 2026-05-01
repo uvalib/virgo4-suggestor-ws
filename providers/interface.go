@@ -19,10 +19,11 @@ type AIUsage struct {
 
 // AIResponseSuggestion contains an individual suggestion and its reason
 type AIResponseSuggestion struct {
-	Name   string `json:"name"`
-	Reason string `json:"reason"`
-	Facet  string `json:"facet,omitempty"`
-	Source string `json:"source,omitempty"`
+	Name   string  `json:"name"`
+	Reason string  `json:"reason"`
+	Facet  string  `json:"facet,omitempty"`
+	Source string  `json:"source,omitempty"`
+	Score  float64 `json:"score,omitempty"`
 }
 
 // AIDymResponse represents the dedicated response for spelling correction

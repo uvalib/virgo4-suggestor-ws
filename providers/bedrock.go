@@ -289,6 +289,7 @@ func (p *BedrockProvider) GetSuggestions(query string, customPrompt string, sugg
 				Name:   a.Name,
 				Facet:  a.FacetLabel,
 				Source: "kb",
+				Score:  a.Score,
 				Reason: "", // Return results without any reason as requested
 			})
 		}
