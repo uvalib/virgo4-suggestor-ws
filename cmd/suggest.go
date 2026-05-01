@@ -399,14 +399,28 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			for _, sugg := range aiRes.Suggestions {
 				trimmedName := strings.TrimSpace(sugg.Name)
 				if trimmedName != "" {
-					candidates = append(candidates, Suggestion{
+					cand := Suggestion{
 						Type:   "author",
 						Value:  trimmedName,
 						Facet:  sugg.Facet,
 						Source: sugg.Source,
 						Reason: sugg.Reason,
 						Score:  sugg.Score,
-					})
+					}
+					
+					// If the LLM didn't provide a score (which is typical), try to recover it from our KB hits
+					if cand.Score <= 0 {
+						for _, kbAuth := range ctxData.KBAuthors {
+							if strings.EqualFold(strings.TrimSpace(kbAuth.Name), trimmedName) {
+								cand.Score = kbAuth.Score
+								if cand.Source == "" || cand.Source == "llm" {
+									cand.Source = "kb" // It's a match, so it's KB sourced
+								}
+								break
+							}
+						}
+					}
+					candidates = append(candidates, cand)
 				}
 			}
 			aiReqUsage.InputTokens += aiRes.Usage.InputTokens
