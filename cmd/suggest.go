@@ -348,8 +348,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 
 		var c2wg sync.WaitGroup
-		hasDidYouMean = false
-		hasAuthor = false
+		hasDidYouMean := false
+		hasAuthor := false
 		
 		if len(s.req.Features) == 0 {
 			// Default legacy behavior: if no features specified, we do author discovery
@@ -518,23 +518,25 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						if c.Facet == "" {
 							c.Facet = c.Value
 						}
+						log.Printf("[CYCLE-3] KB-ONLY: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
 						res.Authors = append(res.Authors, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
 					return
 				}
 
-				if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
-					mu.Lock()
-					defer mu.Unlock()
-					if !seen[canonical] {
-						seen[canonical] = true
-						c.Value = canonical // Replace candidate with exact catalog string
-						c.Facet = canonical // Populate link facet with exact catalog string
-						res.Authors = append(res.Authors, c)
-						res.Suggestions = append(res.Suggestions, c)
+					if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
+						mu.Lock()
+						defer mu.Unlock()
+						if !seen[canonical] {
+							seen[canonical] = true
+							c.Value = canonical // Replace candidate with exact catalog string
+							c.Facet = canonical // Populate link facet with exact catalog string
+							log.Printf("[CYCLE-3] VERIFIED: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
+							res.Authors = append(res.Authors, c)
+							res.Suggestions = append(res.Suggestions, c)
+						}
 					}
-				}
 			}(cand)
 		}
 		vwg.Wait()
@@ -575,6 +577,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	log.Printf("[DEBUG] Final Response: did_you_mean='%s', suggestions=%d, metadata=%v", 
 		res.DidYouMean, len(res.Suggestions), res.Metadata != nil)
+	
+	if s.req.Debug {
+		for i, sugg := range res.Suggestions {
+			log.Printf("[DEBUG] Suggestion[%d]: Value=%s, Type=%s, Score=%.4f, Source=%s", i, sugg.Value, sugg.Type, sugg.Score, sugg.Source)
+		}
+	}
 
 	return res, nil
 }
