@@ -267,11 +267,14 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	// Determine which features are requested
 	hasImages := false
 	hasAuthor := len(s.req.Features) == 0
+	hasDidYouMean := false
 	for _, f := range s.req.Features {
 		if f == "images" {
 			hasImages = true
 		} else if f == "author" || f == "kb-only" {
 			hasAuthor = true
+		} else if f == "didyoumean" {
+			hasDidYouMean = true
 		}
 	}
 
@@ -348,23 +351,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 
 		var c2wg sync.WaitGroup
-		hasDidYouMean := false
-		hasAuthor := false
 		
-		if len(s.req.Features) == 0 {
-			// Default legacy behavior: if no features specified, we do author discovery
-			hasAuthor = true
-		} else {
-			for _, f := range s.req.Features {
-				if f == "didyoumean" {
-					hasDidYouMean = true
-				}
-				if f == "author" || f == "kb-only" {
-					hasAuthor = true
-				}
-			}
-		}
-
 		// 1. Author Suggestions Branch
 		if hasAuthor {
 			c2wg.Add(1)
@@ -411,7 +398,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					// If the LLM didn't provide a score (which is typical), try to recover it from our KB hits
 					if cand.Score <= 0 {
 						for _, kbAuth := range ctxData.KBAuthors {
-							if strings.EqualFold(strings.TrimSpace(kbAuth.Name), trimmedName) {
+							// More robust name matching (trim common catalog suffixes like periods)
+							cleanKB := strings.TrimRight(strings.TrimSpace(kbAuth.Name), ".")
+							cleanCand := strings.TrimRight(trimmedName, ".")
+
+							if strings.EqualFold(cleanKB, cleanCand) {
 								cand.Score = kbAuth.Score
 								if cand.Source == "" || cand.Source == "llm" {
 									cand.Source = "kb" // It's a match, so it's KB sourced
@@ -477,7 +468,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 		var vwg sync.WaitGroup
 		var mu sync.Mutex
-		seen := make(map[string]bool)
+		seenAuthors := make(map[string]bool)
+		seenImages := make(map[string]bool)
 
 		log.Printf("[CYCLE-3] Starting parallel verification for %d candidates...", len(candidates))
 		for _, cand := range candidates {
@@ -492,8 +484,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					if c.IIIFID != "" {
 						key = c.IIIFID
 					}
-					if !seen[key] {
-						seen[key] = true
+					if !seenImages[key] {
+						seenImages[key] = true
 						res.Images = append(res.Images, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
@@ -513,8 +505,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				if kbOnly && c.Source == "kb" {
 					mu.Lock()
 					defer mu.Unlock()
-					if !seen[c.Value] {
-						seen[c.Value] = true
+					if !seenAuthors[c.Value] {
+						seenAuthors[c.Value] = true
 						if c.Facet == "" {
 							c.Facet = c.Value
 						}
@@ -528,14 +520,14 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 						mu.Lock()
 						defer mu.Unlock()
-						if !seen[canonical] {
-							seen[canonical] = true
-							c.Value = canonical // Replace candidate with exact catalog string
-							c.Facet = canonical // Populate link facet with exact catalog string
-							log.Printf("[CYCLE-3] VERIFIED: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
-							res.Authors = append(res.Authors, c)
-							res.Suggestions = append(res.Suggestions, c)
-						}
+						if !seenAuthors[canonical] {
+						seenAuthors[canonical] = true
+						c.Value = canonical // Replace candidate with exact catalog string
+						c.Facet = canonical // Populate link facet with exact catalog string
+						log.Printf("[CYCLE-3] VERIFIED: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
+						res.Authors = append(res.Authors, c)
+						res.Suggestions = append(res.Suggestions, c)
+					}
 					}
 			}(cand)
 		}
