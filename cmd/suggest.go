@@ -533,10 +533,28 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 		vwg.Wait()
 		
-		// Cap final suggestions at 8 as requested by the user
-		if len(res.Suggestions) > 8 {
-			res.Suggestions = res.Suggestions[:8]
+		// Cap final author suggestions at 8 as requested, but preserve all images
+		var finalSugg []Suggestion
+		authCount := 0
+		for _, s := range res.Suggestions {
+			if s.Type == "author" || s.Type == "" {
+				if authCount < 8 {
+					finalSugg = append(finalSugg, s)
+					authCount++
+				}
+			} else {
+				finalSugg = append(finalSugg, s)
+			}
 		}
+		res.Suggestions = finalSugg
+		
+		imgCount := 0
+		for _, s := range res.Suggestions {
+			if s.Type == "image" {
+				imgCount++
+			}
+		}
+		log.Printf("[DEBUG] Final Composition: authors=%d, images=%d, total=%d", authCount, imgCount, len(res.Suggestions))
 	}
 
 	if s.req.Debug {
