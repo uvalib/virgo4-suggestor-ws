@@ -392,15 +392,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			log.Printf("[CYCLE-2] KB-only mode enabled. Skipping LLM synthesis.")
 			if hasAuthor {
 				for _, a := range ctxData.KBAuthors {
-					sourceLabel := "kb"
-					if s.req.Debug && a.Score > 0 {
-						sourceLabel = fmt.Sprintf("kb (%.2f)", a.Score)
-					}
 					candidates = append(candidates, Suggestion{
 						Type:   "author",
 						Value:  a.Name,
 						Facet:  a.FacetLabel,
-						Source: sourceLabel,
+						Source: "kb",
 						Reason: "Author matches your research query",
 						Score:  a.Score,
 					})
@@ -408,15 +404,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}
 			if hasBooks {
 				for _, b := range ctxData.KBBooks {
-					sourceLabel := "kb"
-					if s.req.Debug && b.Score > 0 {
-						sourceLabel = fmt.Sprintf("kb (%.2f)", b.Score)
-					}
 					candidates = append(candidates, Suggestion{
 						Type:   "book",
 						Value:  b.Title,
 						ID:     b.ID,
-						Source: sourceLabel,
+						Source: "kb",
 						Reason: "Book metadata matches your query",
 						Score:  b.Score,
 					})
@@ -495,15 +487,11 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		if !hasAIBooks {
 			log.Printf("[CYCLE-2] No AI book candidates found. Falling back to %d KB book hits.", len(ctxData.KBBooks))
 			for _, b := range ctxData.KBBooks {
-				sourceLabel := "kb"
-				if s.req.Debug && b.Score > 0 {
-					sourceLabel = fmt.Sprintf("kb (%.2f)", b.Score)
-				}
 				candidates = append(candidates, Suggestion{
 					Type:   "book",
 					Value:  b.Title,
 					ID:     b.ID,
-					Source: sourceLabel,
+					Source: "kb",
 					Score:  b.Score,
 					Reason: "Book metadata matches your query",
 				})
@@ -515,17 +503,13 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	if hasImages && len(ctxData.KBImages) > 0 {
 		log.Printf("[CYCLE-2] Adding %d KB image hits.", len(ctxData.KBImages))
 		for _, img := range ctxData.KBImages {
-			sourceLabel := "kb"
-			if s.req.Debug && img.Score > 0 {
-				sourceLabel = fmt.Sprintf("kb (%.2f)", img.Score)
-			}
 			candidates = append(candidates, Suggestion{
 				Type:   "image",
 				Value:  img.Title,
 				ID:     img.ID,
 				Facet:  img.ID,
 				IIIFID: img.IIIFID,
-				Source: sourceLabel,
+				Source: "kb",
 				Reason: "Image matches your search query",
 				Score:  img.Score,
 			})
@@ -706,9 +690,6 @@ func (s *SuggestionContext) processAIResponse(aiRes *providers.AIResponse, candi
 				if strings.EqualFold(strings.TrimRight(kbAuth.Name, "."), strings.TrimRight(trimmedName, ".")) {
 					cand.Score = kbAuth.Score
 					cand.Source = "kb"
-					if s.req.Debug && kbAuth.Score > 0 {
-						cand.Source = fmt.Sprintf("kb (%.2f)", kbAuth.Score)
-					}
 					break
 				}
 			}
@@ -717,9 +698,6 @@ func (s *SuggestionContext) processAIResponse(aiRes *providers.AIResponse, candi
 				if strings.EqualFold(kbBook.Title, trimmedName) {
 					cand.Score = kbBook.Score
 					cand.Source = "kb"
-					if s.req.Debug && kbBook.Score > 0 {
-						cand.Source = fmt.Sprintf("kb (%.2f)", kbBook.Score)
-					}
 					cand.ID = kbBook.ID
 					break
 				}
