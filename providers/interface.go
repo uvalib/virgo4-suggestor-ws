@@ -61,6 +61,8 @@ type BookHit struct {
 	Description string  `json:"description,omitempty"`
 	Type        string  `json:"type,omitempty"`
 	Score       float64 `json:"score,omitempty"`
+	Rating      float64 `json:"rating,omitempty"`
+	RatingCount int     `json:"rating_count,omitempty"`
 }
 
 // SuggestionContextData holds the gathered research from Solr and KB

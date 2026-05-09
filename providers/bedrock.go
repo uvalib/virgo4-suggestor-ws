@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -223,7 +225,16 @@ func (p *BedrockProvider) RetrieveBooks(query string, limit int, threshold float
 		return nil, nil
 	}
 
-	log.Printf("[KB-BOOKS] Querying KB [%s] with query [%s]", p.BooksKnowledgeBaseID, query)
+	// Increase internal limit to allow for reranking/popularity boosting
+	internalLimit := limit * 4
+	if internalLimit < 20 {
+		internalLimit = 20
+	}
+	if internalLimit > 100 {
+		internalLimit = 100
+	}
+
+	log.Printf("[KB-BOOKS] Querying KB [%s] with query [%s] (limit=%d)", p.BooksKnowledgeBaseID, query, internalLimit)
 
 	input := &bedrockagentruntime.RetrieveInput{
 		KnowledgeBaseId: aws.String(p.BooksKnowledgeBaseID),
@@ -232,7 +243,7 @@ func (p *BedrockProvider) RetrieveBooks(query string, limit int, threshold float
 		},
 		RetrievalConfiguration: &types.KnowledgeBaseRetrievalConfiguration{
 			VectorSearchConfiguration: &types.KnowledgeBaseVectorSearchConfiguration{
-				NumberOfResults: aws.Int32(int32(limit)),
+				NumberOfResults: aws.Int32(int32(internalLimit)),
 			},
 		},
 	}
@@ -256,9 +267,21 @@ func (p *BedrockProvider) RetrieveBooks(query string, limit int, threshold float
 		hit.Authors = p.extractMetadataStringList(ref.Metadata, "authors")
 		hit.Description = p.extractMetadataString(ref.Metadata, "description")
 		hit.Type = p.extractMetadataString(ref.Metadata, "type")
+		hit.Rating = p.extractMetadataFloat(ref.Metadata, "rating")
+		hit.RatingCount = p.extractMetadataInt(ref.Metadata, "rating_count")
 		
 		if ref.Score != nil {
 			hit.Score = *ref.Score
+		}
+
+		// Apply Popularity Boost: Score * (1.0 + 0.15 * log10(RatingCount + 1))
+		if hit.RatingCount > 0 {
+			boost := 0.15 * math.Log10(float64(hit.RatingCount)+1.0)
+			oldScore := hit.Score
+			hit.Score = hit.Score * (1.0 + boost)
+			if i < 5 { // Only log the top few to keep noise down
+				log.Printf("[KB-BOOKS] Applied boost to '%s': %.4f -> %.4f (count=%d)", hit.Title, oldScore, hit.Score, hit.RatingCount)
+			}
 		}
 
 		if (hit.ID != "" || hit.Title != "") && hit.Score >= minScoreThreshold {
@@ -266,10 +289,19 @@ func (p *BedrockProvider) RetrieveBooks(query string, limit int, threshold float
 		} else if hit.Score < minScoreThreshold {
 			log.Printf("[KB-BOOKS] Dropping low-score book hit: '%s' (score=%.3f < %.3f)", hit.Title, hit.Score, minScoreThreshold)
 		}
-		_ = i
 	}
 
-	log.Printf("[KB-BOOKS] Returning %d validated results", len(results))
+	// Re-sort by boosted score
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Cap at requested limit
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	log.Printf("[KB-BOOKS] Returning %d validated and boosted results", len(results))
 	return results, nil
 }
 
@@ -336,6 +368,24 @@ func (p *BedrockProvider) extractMetadataString(metadata interface{}, keys ...st
 		}
 	}
 	return ""
+}
+
+func (p *BedrockProvider) extractMetadataFloat(metadata interface{}, keys ...string) float64 {
+	s := p.extractMetadataString(metadata, keys...)
+	if s == "" {
+		return 0.0
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
+}
+
+func (p *BedrockProvider) extractMetadataInt(metadata interface{}, keys ...string) int {
+	s := p.extractMetadataString(metadata, keys...)
+	if s == "" {
+		return 0
+	}
+	i, _ := strconv.Atoi(s)
+	return i
 }
 
 func (p *BedrockProvider) metadataValueToString(val interface{}) string {
