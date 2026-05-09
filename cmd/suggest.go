@@ -277,7 +277,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			hasImages = true
 		} else if f == "author" || f == "kb-only" {
 			hasAuthor = true
-		} else if f == "books" {
+		} else if f == "book" || f == "books" {
 			hasBooks = true
 		} else if f == "didyoumean" {
 			hasDidYouMean = true
@@ -331,7 +331,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if hasBooks {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if s.svc.AIProvider == nil {
