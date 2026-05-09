@@ -20,6 +20,8 @@ type AIUsage struct {
 // AIResponseSuggestion contains an individual suggestion and its reason
 type AIResponseSuggestion struct {
 	Name   string  `json:"name"`
+	ID     string  `json:"id,omitempty"`
+	Type   string  `json:"type"`
 	Reason string  `json:"reason"`
 	Facet  string  `json:"facet,omitempty"`
 	Source string  `json:"source,omitempty"`
@@ -51,17 +53,31 @@ type ImageHit struct {
 	Score      float64 `json:"score,omitempty"`
 }
 
+// BookHit contains metadata for a book from the Knowledge Base
+type BookHit struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Authors     []string `json:"authors,omitempty"`
+	Description string  `json:"description,omitempty"`
+	Type        string  `json:"type,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+}
+
 // SuggestionContextData holds the gathered research from Solr and KB
 type SuggestionContextData struct {
 	KBAuthors []AuthorHit
 	KBImages  []ImageHit
+	KBBooks   []BookHit
 }
 
 // AIProvider defines the interface for different AI backends
 type AIProvider interface {
 
-	// GetSuggestions generates search suggestions based on the user query and gathered context
-	GetSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool, features []string) (*AIResponse, error)
+	// GetAuthorSuggestions generates author search suggestions based on the user query and gathered context
+	GetAuthorSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool) (*AIResponse, error)
+
+	// GetBookSuggestions generates book search suggestions based on the user query and gathered context
+	GetBookSuggestions(query string, customPrompt string, suggContext SuggestionContextData, debug bool) (*AIResponse, error)
 
 	// GetDidYouMean generates a dedicated spelling correction/refinement for the query
 	GetDidYouMean(query string, debug bool) (*AIDymResponse, error)
@@ -77,4 +93,7 @@ type AIProvider interface {
 
 	// RetrieveImages will query the provider's Image Knowledge Base and return relevant image metadata
 	RetrieveImages(query string, limit int, threshold float64) ([]ImageHit, error)
+
+	// RetrieveBooks will query the provider's Book Knowledge Base and return relevant book metadata
+	RetrieveBooks(query string, limit int, threshold float64) ([]BookHit, error)
 }

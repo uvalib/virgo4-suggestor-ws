@@ -29,6 +29,7 @@ type SuggestionContext struct {
 
 // Suggestion contains data for a single suggestion
 type Suggestion struct {
+	ID     string  `json:"id,omitempty"`
 	Type   string  `json:"type"`
 	Value  string  `json:"value"`
 	Facet  string  `json:"facet"`
@@ -46,6 +47,7 @@ type SuggestionRequest struct {
 	Features []string `json:"features"`
 	AuthorThreshold float64 `json:"authorThreshold"`
 	ImageThreshold  float64 `json:"imageThreshold"`
+	BookThreshold   float64 `json:"bookThreshold"`
 }
 
 // SuggestionResponse contains the full set of suggestions
@@ -54,6 +56,7 @@ type SuggestionResponse struct {
 	Suggestions []Suggestion        `json:"suggestions"`
 	Authors     []Suggestion        `json:"authors"`
 	Images      []Suggestion        `json:"images"`
+	Books       []Suggestion        `json:"books"`
 	Metadata    *SuggestionMetadata `json:"metadata,omitempty"`
 }
 
@@ -267,12 +270,15 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	// Determine which features are requested
 	hasImages := false
 	hasAuthor := len(s.req.Features) == 0
+	hasBooks := false
 	hasDidYouMean := false
 	for _, f := range s.req.Features {
 		if f == "images" {
 			hasImages = true
 		} else if f == "author" || f == "kb-only" {
 			hasAuthor = true
+		} else if f == "books" {
+			hasBooks = true
 		} else if f == "didyoumean" {
 			hasDidYouMean = true
 		}
@@ -282,6 +288,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		wg.Add(1)
 	}
 	if hasAuthor {
+		wg.Add(1)
+	}
+	if hasBooks {
 		wg.Add(1)
 	}
 
@@ -321,6 +330,25 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}()
 	}
 
+	if hasBooks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if s.svc.AIProvider == nil {
+				return
+			}
+			start := time.Now()
+			log.Printf("[CYCLE-1] Starting Book KB retrieval (threshold=%.2f)", s.req.BookThreshold)
+			bookResults, err := s.svc.AIProvider.RetrieveBooks(rawQuery, 10, s.req.BookThreshold)
+			if err != nil {
+				log.Printf("[CYCLE-1] Book KB warning: %s (took %v)", err.Error(), time.Since(start))
+				return
+			}
+			ctxData.KBBooks = bookResults
+			log.Printf("[CYCLE-1] Finished Book KB retrieval (took %v)", time.Since(start))
+		}()
+	}
+
 
 	done := make(chan struct{})
 	go func() {
@@ -341,7 +369,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 	var candidates []Suggestion
 	var aiReqUsage providers.AIUsage
-	var aiRes *providers.AIResponse
 	var dymRes *providers.AIDymResponse
 
 	if s.svc.AIProvider != nil {
@@ -351,21 +378,86 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		}
 
 		var c2wg sync.WaitGroup
-		
-		// 1. Author Suggestions Branch
-		if hasAuthor {
-			c2wg.Add(1)
-			go func() {
-				defer c2wg.Done()
-				var err error
-				aiRes, err = s.svc.AIProvider.GetSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug, s.req.Features)
-				if err != nil {
-					log.Printf("[CYCLE-2] ERROR: AI suggestions failed: %s", err.Error())
-				}
-			}()
+		var mu sync.Mutex
+
+		// 0. Handle KB-Only Bypass
+		kbOnly := false
+		for _, f := range s.req.Features {
+			if f == "kb-only" {
+				kbOnly = true
+				break
+			}
 		}
 
-		// 2. DidYouMean Branch (Parallel)
+		if kbOnly {
+			log.Printf("[CYCLE-2] KB-only mode enabled. Skipping LLM synthesis.")
+			if hasAuthor {
+				for _, a := range ctxData.KBAuthors {
+					sourceLabel := "kb"
+					if s.req.Debug && a.Score > 0 {
+						sourceLabel = fmt.Sprintf("kb (%.2f)", a.Score)
+					}
+					candidates = append(candidates, Suggestion{
+						Type:   "author",
+						Value:  a.Name,
+						Facet:  a.FacetLabel,
+						Source: sourceLabel,
+						Reason: "Author matches your research query",
+						Score:  a.Score,
+					})
+				}
+			}
+			if hasBooks {
+				for _, b := range ctxData.KBBooks {
+					sourceLabel := "kb"
+					if s.req.Debug && b.Score > 0 {
+						sourceLabel = fmt.Sprintf("kb (%.2f)", b.Score)
+					}
+					candidates = append(candidates, Suggestion{
+						Type:   "book",
+						Value:  b.Title,
+						ID:     b.ID,
+						Source: sourceLabel,
+						Reason: "Book metadata matches your query",
+						Score:  b.Score,
+					})
+				}
+			}
+		} else {
+			// 1. Author Suggestions Branch
+			if hasAuthor {
+				c2wg.Add(1)
+				go func() {
+					defer c2wg.Done()
+					res, err := s.svc.AIProvider.GetAuthorSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
+					if err != nil {
+						log.Printf("[CYCLE-2] ERROR: Author AI failed: %s", err.Error())
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					s.processAIResponse(res, &candidates, &aiReqUsage, ctxData)
+				}()
+			}
+
+			// 2. Book Suggestions Branch
+			if hasBooks {
+				c2wg.Add(1)
+				go func() {
+					defer c2wg.Done()
+					res, err := s.svc.AIProvider.GetBookSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
+					if err != nil {
+						log.Printf("[CYCLE-2] ERROR: Book AI failed: %s", err.Error())
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					s.processAIResponse(res, &candidates, &aiReqUsage, ctxData)
+				}()
+			}
+		}
+
+		// 3. DidYouMean Branch (Parallel)
 		if hasDidYouMean {
 			c2wg.Add(1)
 			go func() {
@@ -380,47 +472,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 		c2wg.Wait()
 
-		// Process Suggestions
-		if aiRes != nil {
-			log.Printf("[CYCLE-2] AI suggestions produced: count=%d (took %v)", len(aiRes.Suggestions), time.Since(startCycle2))
-			for _, sugg := range aiRes.Suggestions {
-				trimmedName := strings.TrimSpace(sugg.Name)
-				if trimmedName != "" {
-					cand := Suggestion{
-						Type:   "author",
-						Value:  trimmedName,
-						Facet:  sugg.Facet,
-						Source: sugg.Source,
-						Reason: sugg.Reason,
-						Score:  sugg.Score,
-					}
-					
-					// Always verify the LLM's output against the actual KB hits to prevent hallucinations and misattribution
-					hasMatch := false
-					for _, kbAuth := range ctxData.KBAuthors {
-						// More robust name matching (trim common catalog suffixes like periods)
-						cleanKB := strings.TrimRight(strings.TrimSpace(kbAuth.Name), ".")
-						cleanCand := strings.TrimRight(trimmedName, ".")
-
-						if strings.EqualFold(cleanKB, cleanCand) {
-							cand.Score = kbAuth.Score
-							cand.Source = "kb" // Force correct attribution
-							hasMatch = true
-							break
-						}
-					}
-					
-					if !hasMatch {
-						cand.Score = 0.0 // Strip any hallucinated scores
-						cand.Source = "llm" // Force correct attribution
-					}
-					candidates = append(candidates, cand)
-				}
-			}
-			aiReqUsage.InputTokens += aiRes.Usage.InputTokens
-			aiReqUsage.OutputTokens += aiRes.Usage.OutputTokens
-		}
-
 		// Process DidYouMean
 		if dymRes != nil && dymRes.DidYouMean != "" && !strings.EqualFold(strings.TrimSpace(dymRes.DidYouMean), strings.TrimSpace(rawQuery)) {
 			res.DidYouMean = dymRes.DidYouMean
@@ -433,19 +484,31 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			cycle2Time = time.Since(startCycle2).Milliseconds()
 		}
 	}
-	// If AI failed or provided no results, fall back to Knowledge Base candidates
-	// Only do this if authors were actually requested or if no features were specified
-	if len(candidates) == 0 && hasAuthor {
-		log.Printf("[CYCLE-2] No AI candidates found. Falling back to %d KB author hits.", len(ctxData.KBAuthors))
-		for _, a := range ctxData.KBAuthors {
-			candidates = append(candidates, Suggestion{
-				Type:   "author",
-				Value:  a.Name,
-				Facet:  a.FacetLabel,
-				Source: "kb",
-				Score:  a.Score,
-				Reason: "Author's metadata aligns with your query",
-			})
+	// Fallback for Book hits if no AI results produced any books
+	if hasBooks {
+		hasAIBooks := false
+		for _, c := range candidates {
+			if c.Type == "book" {
+				hasAIBooks = true
+				break
+			}
+		}
+		if !hasAIBooks {
+			log.Printf("[CYCLE-2] No AI book candidates found. Falling back to %d KB book hits.", len(ctxData.KBBooks))
+			for _, b := range ctxData.KBBooks {
+				sourceLabel := "kb"
+				if s.req.Debug && b.Score > 0 {
+					sourceLabel = fmt.Sprintf("kb (%.2f)", b.Score)
+				}
+				candidates = append(candidates, Suggestion{
+					Type:   "book",
+					Value:  b.Title,
+					ID:     b.ID,
+					Source: sourceLabel,
+					Score:  b.Score,
+					Reason: "Book metadata matches your query",
+				})
+			}
 		}
 	}
 
@@ -453,12 +516,17 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	if hasImages && len(ctxData.KBImages) > 0 {
 		log.Printf("[CYCLE-2] Adding %d KB image hits.", len(ctxData.KBImages))
 		for _, img := range ctxData.KBImages {
+			sourceLabel := "kb"
+			if s.req.Debug && img.Score > 0 {
+				sourceLabel = fmt.Sprintf("kb (%.2f)", img.Score)
+			}
 			candidates = append(candidates, Suggestion{
 				Type:   "image",
 				Value:  img.Title,
+				ID:     img.ID,
 				Facet:  img.ID,
 				IIIFID: img.IIIFID,
-				Source: "kb",
+				Source: sourceLabel,
 				Reason: "Image matches your search query",
 				Score:  img.Score,
 			})
@@ -490,6 +558,17 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					if !seenImages[key] {
 						seenImages[key] = true
 						res.Images = append(res.Images, c)
+						res.Suggestions = append(res.Suggestions, c)
+					}
+					return
+				}
+
+				if c.Type == "book" {
+					mu.Lock()
+					defer mu.Unlock()
+					if !seenAuthors[c.Value] { // Use the same dedupe map for now as titles are usually distinct from authors
+						seenAuthors[c.Value] = true
+						res.Books = append(res.Books, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
 					return
@@ -578,11 +657,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			CostPer1K:    calculateCostPer1K(modelUsed, aiReqUsage.InputTokens, aiReqUsage.OutputTokens),
 			Model:        modelUsed,
 		}
-		if aiRes != nil {
-			res.Metadata.InputPrompt = aiRes.InputPrompt
-			res.Metadata.RawOutput = aiRes.RawOutput
-			res.Metadata.Reasoning = aiRes.Reasoning
-		}
+		// Note: Metadata now represents the aggregate of all parallel LLM calls.
+		// Detailed per-call debug info (prompts/output) is omitted for brevity in combined mode.
 		if !startCycle3.IsZero() {
 			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
 		}
@@ -598,6 +674,64 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	return res, nil
+}
+
+func (s *SuggestionContext) processAIResponse(aiRes *providers.AIResponse, candidates *[]Suggestion, usage *providers.AIUsage, ctxData providers.SuggestionContextData) {
+	if aiRes == nil {
+		return
+	}
+
+	for _, sugg := range aiRes.Suggestions {
+		trimmedName := strings.TrimSpace(sugg.Name)
+		if trimmedName == "" {
+			continue
+		}
+
+		cand := Suggestion{
+			ID:     sugg.ID,
+			Type:   sugg.Type,
+			Value:  trimmedName,
+			Facet:  sugg.Facet,
+			Source: sugg.Source,
+			Reason: sugg.Reason,
+			Score:  sugg.Score,
+		}
+
+		if cand.Type == "" {
+			cand.Type = "author"
+		}
+
+		// Verify against KB hits
+		if cand.Type == "author" {
+			for _, kbAuth := range ctxData.KBAuthors {
+				if strings.EqualFold(strings.TrimRight(kbAuth.Name, "."), strings.TrimRight(trimmedName, ".")) {
+					cand.Score = kbAuth.Score
+					cand.Source = "kb"
+					if s.req.Debug && kbAuth.Score > 0 {
+						cand.Source = fmt.Sprintf("kb (%.2f)", kbAuth.Score)
+					}
+					break
+				}
+			}
+		} else if cand.Type == "book" {
+			for _, kbBook := range ctxData.KBBooks {
+				if strings.EqualFold(kbBook.Title, trimmedName) {
+					cand.Score = kbBook.Score
+					cand.Source = "kb"
+					if s.req.Debug && kbBook.Score > 0 {
+						cand.Source = fmt.Sprintf("kb (%.2f)", kbBook.Score)
+					}
+					cand.ID = kbBook.ID
+					break
+				}
+			}
+		}
+
+		*candidates = append(*candidates, cand)
+	}
+
+	usage.InputTokens += aiRes.Usage.InputTokens
+	usage.OutputTokens += aiRes.Usage.OutputTokens
 }
 
 // GetAuthorResourceCounts retrieves document counts for a list of authors from Solr

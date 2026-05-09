@@ -31,6 +31,7 @@ type serviceConfigSuggestion struct {
 
 type serviceConfigSuggestionTypes struct {
 	Author serviceConfigSuggestion `json:"author,omitempty"`
+	Book   serviceConfigSuggestion `json:"book,omitempty"`
 }
 
 type serviceConfigSolrClient struct {
@@ -51,14 +52,15 @@ type serviceConfigSolr struct {
 }
 
 type serviceConfigAI struct {
-	Provider         string `json:"provider,omitempty"`
-	Key              string `json:"key,omitempty"`
-	URL              string `json:"url,omitempty"`
-	Model            string `json:"model,omitempty"`
+	Provider               string `json:"provider,omitempty"`
+	Key                    string `json:"key,omitempty"`
+	URL                    string `json:"url,omitempty"`
+	Model                  string `json:"model,omitempty"`
 	KnowledgeBaseID        string `json:"knowledge_base_id,omitempty"`
 	ImagesKnowledgeBaseID  string `json:"images_knowledge_base_id,omitempty"`
+	BooksKnowledgeBaseID   string `json:"books_knowledge_base_id,omitempty"`
 	GuardrailID            string `json:"guardrail_id,omitempty"`
-	GuardrailVersion string `json:"guardrail_version,omitempty"`
+	GuardrailVersion       string `json:"guardrail_version,omitempty"`
 }
 
 type serviceConfig struct {
@@ -141,6 +143,9 @@ func loadConfig() *serviceConfig {
 	if imgKbID := os.Getenv(envPrefix + "_IMAGES_KB_ID"); imgKbID != "" {
 		cfg.AI.ImagesKnowledgeBaseID = imgKbID
 	}
+	if bookKbID := os.Getenv(envPrefix + "_BOOKS_KB_ID"); bookKbID != "" {
+		cfg.AI.BooksKnowledgeBaseID = bookKbID
+	}
 	if grID := os.Getenv(envPrefix + "_GUARDRAIL_ID"); grID != "" {
 		cfg.AI.GuardrailID = grID
 	}
@@ -160,6 +165,9 @@ func loadConfig() *serviceConfig {
 	}
 	if cfg.AI.ImagesKnowledgeBaseID == "" {
 		cfg.AI.ImagesKnowledgeBaseID = "J34YBBVTGA"
+	}
+	if cfg.AI.BooksKnowledgeBaseID == "" {
+		cfg.AI.BooksKnowledgeBaseID = "UMMEKLDTPR"
 	}
 	if cfg.AI.GuardrailID == "" {
 		cfg.AI.GuardrailID = "sii0rl6seb24"
