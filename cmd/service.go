@@ -19,8 +19,18 @@ import (
 
 // ServiceSolrContext contains data related to the Solr API connection
 type ServiceSolrContext struct {
-	client *http.Client
-	url    string
+	client   *http.Client
+	host     string
+	core     string
+	endpoint string
+}
+
+func (c *ServiceSolrContext) GetURL(coreOverride string) string {
+	core := c.core
+	if coreOverride != "" {
+		core = coreOverride
+	}
+	return fmt.Sprintf("%s/%s/%s", c.host, core, c.endpoint)
 }
 
 // ServiceSolr contains data related to the Solr API connection
@@ -72,13 +82,17 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	log.Printf("initializing service")
 
 	serviceCtx := ServiceSolrContext{
-		url:    fmt.Sprintf("%s/%s/%s", cfg.Solr.Host, cfg.Solr.Core, cfg.Solr.Clients.Service.Endpoint),
-		client: httpClientWithTimeouts(cfg.Solr.Clients.Service.ConnTimeout, cfg.Solr.Clients.Service.ReadTimeout),
+		host:     cfg.Solr.Host,
+		core:     cfg.Solr.Core,
+		endpoint: cfg.Solr.Clients.Service.Endpoint,
+		client:   httpClientWithTimeouts(cfg.Solr.Clients.Service.ConnTimeout, cfg.Solr.Clients.Service.ReadTimeout),
 	}
 
 	healthCtx := ServiceSolrContext{
-		url:    fmt.Sprintf("%s/%s/%s", cfg.Solr.Host, cfg.Solr.Core, cfg.Solr.Clients.HealthCheck.Endpoint),
-		client: httpClientWithTimeouts(cfg.Solr.Clients.HealthCheck.ConnTimeout, cfg.Solr.Clients.HealthCheck.ReadTimeout),
+		host:     cfg.Solr.Host,
+		core:     cfg.Solr.Core,
+		endpoint: cfg.Solr.Clients.HealthCheck.Endpoint,
+		client:   httpClientWithTimeouts(cfg.Solr.Clients.HealthCheck.ConnTimeout, cfg.Solr.Clients.HealthCheck.ReadTimeout),
 	}
 
 	solr := ServiceSolr{
@@ -96,8 +110,8 @@ func InitializeService(cfg *serviceConfig) *ServiceContext {
 	cfg.AI.Model = "google.gemma-3-4b-it"
 
 	// Initialize AI Provider
-	log.Printf("[SERVICE] solr service url     = [%s]", serviceCtx.url)
-	log.Printf("[SERVICE] solr healthcheck url = [%s]", healthCtx.url)
+	log.Printf("[SERVICE] solr host             = [%s]", cfg.Solr.Host)
+	log.Printf("[SERVICE] solr core             = [%s]", cfg.Solr.Core)
 	log.Printf("[SERVICE] ai provider          = [%s]", cfg.AI.Provider)
 	log.Printf("[SERVICE] ai model             = [%s]", cfg.AI.Model)
 

@@ -770,11 +770,14 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	// Standard filters often include count:[2 TO *] to avoid niche results.
 	// For AI-suggested authors, we relax this to count:[1 TO *] because we 
 	// trust the AI's relevance judgment and want to show enriched researchers.
+	// Books in test_core don't have a 'count' field, so we skip this for books.
 	fq := make([]string, len(sugg.Params.Fq))
 	copy(fq, sugg.Params.Fq)
-	for i, f := range fq {
-		if strings.Contains(f, "count:[2 TO *]") {
-			fq[i] = strings.ReplaceAll(f, "count:[2 TO *]", "count:[1 TO *]")
+	if suggType != "book" {
+		for i, f := range fq {
+			if strings.Contains(f, "count:[2 TO *]") {
+				fq[i] = strings.ReplaceAll(f, "count:[2 TO *]", "count:[1 TO *]")
+			}
 		}
 	}
 
@@ -797,9 +800,13 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		Q:       escapedValue, // Non-quoted to allow First Last -> Last, First matching
 		Qf:      sugg.Params.Qf,
 		Mm:      "75%", // Relaxed from 100% to handle missing initials or minor variations
-		Fl:      []string{"phrase", "count", "id", "identifier"},
+		Fl:      []string{"phrase", "count", "id", "identifier", "title_a", "author_a"},
 		Sort:    sugg.Params.Sort,
 		Fq:      fq,
+	}
+
+	if suggType == "book" {
+		solrReq.Core = "test_core"
 	}
 
 	// If no filters were provided in config, ensure we at least match the type
@@ -822,10 +829,17 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 
 		for _, doc := range solrRes.Response.Docs {
 			canonical := doc.Phrase
-			score, ok := isSimilar(value, canonical)
+			if canonical == "" && len(doc.TitleA) > 0 {
+				canonical = doc.TitleA[0]
+			}
+			if canonical == "" {
+				continue
+			}
+
+			score, ok := isSimilar(value, canonical, suggType)
 			if ok {
 				// If we have multiple 'ok' matches, pick the one with the highest similarity score.
-				// If scores are tied, prefer the one with a higher catalog count.
+				// If scores are tied, prefer the one with a higher catalog count (if available).
 				if score > bestScore || (score == bestScore && doc.Count > bestCount) {
 					bestScore = score
 					bestCanonical = canonical
@@ -841,7 +855,10 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 
 		// If we got hits but none were similar, log the top failure for diagnostics
 		topCanon := solrRes.Response.Docs[0].Phrase
-		topScore, _ := isSimilar(value, topCanon)
+		if topCanon == "" && len(solrRes.Response.Docs[0].TitleA) > 0 {
+			topCanon = solrRes.Response.Docs[0].TitleA[0]
+		}
+		topScore, _ := isSimilar(value, topCanon, suggType)
 		log.Printf("[CYCLE-3] Rejecting '%s %s' -> Top candidate '%s' has similarity too low (%0.2f)", suggType, value, topCanon, topScore)
 		return "", "", false
 	}
@@ -852,14 +869,17 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 
 // isSimilar performs a basic similarity check between original and canonical names.
 // It ensures that we don't 'repair' a name into something completely unrelated.
-func isSimilar(orig, canon string) (float64, bool) {
+func isSimilar(orig, canon string, suggType string) (float64, bool) {
 	clean := func(s string) []string {
 		// 1. Strip catalog-specific leading symbols (e.g., * in *Wenger, Jared)
 		s = strings.TrimLeft(s, "*\"' ")
 
 		// 2. Remove dates: comma followed by digits and optional dash (e.g., ", 1973-")
-		reDates := regexp.MustCompile(`,?\s*\d{4}[-\d]*`)
-		s = reDates.ReplaceAllString(s, "")
+		// We skip this for books because 4-digit numbers might be part of the title (e.g., "1984")
+		if suggType != "book" {
+			reDates := regexp.MustCompile(`,?\s*\d{4}[-\d]*`)
+			s = reDates.ReplaceAllString(s, "")
+		}
 
 		// 3. Remove roles and descriptions in parentheses (e.g., "(editor)")
 		reRoles := regexp.MustCompile(`\(.*?\)`)
