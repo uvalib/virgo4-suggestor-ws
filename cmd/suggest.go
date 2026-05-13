@@ -337,8 +337,8 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			start := time.Now()
-			log.Printf("[CYCLE-1] Starting Book KB retrieval (threshold=%.2f)", s.req.BookThreshold)
-			bookResults, err := s.svc.AIProvider.RetrieveBooks(rawQuery, 10, s.req.BookThreshold)
+			log.Printf(\"[CYCLE-1] Starting Book KB retrieval (threshold=%.2f)\", s.req.BookThreshold)
+			bookResults, err := s.svc.AIProvider.RetrieveBooks(rawQuery, 20, s.req.BookThreshold)
 			if err != nil {
 				log.Printf("[CYCLE-1] Book KB warning: %s (took %v)", err.Error(), time.Since(start))
 				return
@@ -547,12 +547,21 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				}
 
 				if c.Type == "book" {
-					mu.Lock()
-					defer mu.Unlock()
-					if !seenAuthors[c.Value] { // Use the same dedupe map for now as titles are usually distinct from authors
-						seenAuthors[c.Value] = true
-						res.Books = append(res.Books, c)
-						res.Suggestions = append(res.Suggestions, c)
+					// All books MUST be verified against the catalog to get the correct record ID (u...)
+					// and ensure they actually exist. KB books are re-verified to fix any ISBN-based IDs.
+					if canonical, id, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
+						mu.Lock()
+						defer mu.Unlock()
+						if !seenAuthors[canonical] {
+							seenAuthors[canonical] = true
+							c.Value = canonical
+							c.ID = id
+							log.Printf("[CYCLE-3] VERIFIED BOOK: Title=%s, ID=%s, Source=%s, Score=%.4f", c.Value, c.ID, c.Source, c.Score)
+							res.Books = append(res.Books, c)
+							res.Suggestions = append(res.Suggestions, c)
+						}
+					} else {
+						log.Printf("[CYCLE-3] REJECTED BOOK: Title=%s (Not found in catalog)", c.Value)
 					}
 					return
 				}
@@ -748,10 +757,15 @@ func (s *SuggestionContext) GetAuthorResourceCounts(authors []string) (map[strin
 	return counts, nil
 }
 
-// verifySuggestionResults checks if a suggested name exists in the autocomplete core with hits
-// and returns the CANONICAL name (e.g., "Gide, Andre") if found.
-func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) (string, bool) {
-	sugg := s.svc.config.Suggestions.Author
+// verifySuggestionResults checks if a suggested name/title exists in the autocomplete core with hits
+// and returns the CANONICAL name/title and its catalog identifier if found.
+func (s *SuggestionContext) verifySuggestionResults(value string, suggType string) (string, string, bool) {
+	var sugg serviceConfigSuggestion
+	if suggType == "book" {
+		sugg = s.svc.config.Suggestions.Book
+	} else {
+		sugg = s.svc.config.Suggestions.Author
+	}
 
 	// Standard filters often include count:[2 TO *] to avoid niche results.
 	// For AI-suggested authors, we relax this to count:[1 TO *] because we 
@@ -783,7 +797,7 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 		Q:       escapedValue, // Non-quoted to allow First Last -> Last, First matching
 		Qf:      sugg.Params.Qf,
 		Mm:      "75%", // Relaxed from 100% to handle missing initials or minor variations
-		Fl:      []string{"phrase", "count"},
+		Fl:      []string{"phrase", "count", "id", "identifier"},
 		Sort:    sugg.Params.Sort,
 		Fq:      fq,
 	}
@@ -797,11 +811,12 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 	if err != nil {
 		// Log error but fail CLOSED -- we don't want to show suggestions we can't verify
 		log.Printf("[CYCLE-3] Solr error for '%s %s': %v (Failing closed)", suggType, value, err)
-		return "", false
+		return "", "", false
 	}
 
 	if solrRes.Response.NumFound > 0 && len(solrRes.Response.Docs) > 0 {
 		var bestCanonical string
+		var bestID string
 		var bestScore float64
 		var bestCount int
 
@@ -814,25 +829,25 @@ func (s *SuggestionContext) verifySuggestionResults(value string, suggType strin
 				if score > bestScore || (score == bestScore && doc.Count > bestCount) {
 					bestScore = score
 					bestCanonical = canonical
+					bestID = doc.ID
 					bestCount = doc.Count
 				}
 			}
 		}
-
 		if bestCanonical != "" {
-			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (%d hits, similarity %0.2f)", suggType, value, bestCanonical, bestCount, bestScore)
-			return bestCanonical, true
+			log.Printf("[CYCLE-3] Repaired '%s %s' -> '%s' (ID=%s, %d hits, similarity %0.2f)", suggType, value, bestCanonical, bestID, bestCount, bestScore)
+			return bestCanonical, bestID, true
 		}
 
 		// If we got hits but none were similar, log the top failure for diagnostics
 		topCanon := solrRes.Response.Docs[0].Phrase
 		topScore, _ := isSimilar(value, topCanon)
 		log.Printf("[CYCLE-3] Rejecting '%s %s' -> Top candidate '%s' has similarity too low (%0.2f)", suggType, value, topCanon, topScore)
-		return "", false
+		return "", "", false
 	}
 
 	log.Printf("[CYCLE-3] Rejecting '%s %s' (No catalog results found with 75%% word match)", suggType, value)
-	return "", false
+	return "", "", false
 }
 
 // isSimilar performs a basic similarity check between original and canonical names.

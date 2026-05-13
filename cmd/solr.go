@@ -49,12 +49,14 @@ type SolrResponseHeader struct {
 
 // SolrDocument is a single result record for a Solr request
 type SolrDocument struct {
-	Phrase string   `json:"phrase,omitempty"`
-	Type   string   `json:"type,omitempty"`
-	Count  int      `json:"count,omitempty"`
-	Score  float64  `json:"score,omitempty"`
-	Title  []string `json:"title_display,omitempty"`
-	Author []string `json:"author_facet,omitempty"`
+	ID         string   `json:"id,omitempty"`
+	Phrase     string   `json:"phrase,omitempty"`
+	Type       string   `json:"type,omitempty"`
+	Count      int      `json:"count,omitempty"`
+	Score      float64  `json:"score,omitempty"`
+	Title      []string `json:"title_display,omitempty"`
+	Author     []string `json:"author_facet,omitempty"`
+	Identifier string   `json:"identifier,omitempty"`
 }
 
 // SolrResponseDocuments is a set of result records for a Solr request, along with some metadata
