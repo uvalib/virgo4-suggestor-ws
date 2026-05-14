@@ -337,7 +337,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			start := time.Now()
-			log.Printf(\"[CYCLE-1] Starting Book KB retrieval (threshold=%.2f)\", s.req.BookThreshold)
+			log.Printf("[CYCLE-1] Starting Book KB retrieval (threshold=%.2f)", s.req.BookThreshold)
 			bookResults, err := s.svc.AIProvider.RetrieveBooks(rawQuery, 20, s.req.BookThreshold)
 			if err != nil {
 				log.Printf("[CYCLE-1] Book KB warning: %s (took %v)", err.Error(), time.Since(start))
@@ -547,8 +547,22 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				}
 
 				if c.Type == "book" {
-					// All books MUST be verified against the catalog to get the correct record ID (u...)
-					// and ensure they actually exist. KB books are re-verified to fix any ISBN-based IDs.
+					// If it's from the Knowledge Base, the ID is already the catalog_id (u...).
+					// We trust this ID and skip the extra Solr verification step.
+					if c.Source == "kb" && c.ID != "" {
+						mu.Lock()
+						defer mu.Unlock()
+						if !seenAuthors[c.Value] {
+							seenAuthors[c.Value] = true
+							log.Printf("[CYCLE-3] KB BOOK: Title=%s, ID=%s, Score=%.4f (Trusted)", c.Value, c.ID, c.Score)
+							res.Books = append(res.Books, c)
+							res.Suggestions = append(res.Suggestions, c)
+						}
+						return
+					}
+
+					// For LLM-only suggestions or those missing IDs, we still verify to get the ID
+					// and ensure they actually exist in the catalog.
 					if canonical, id, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 						mu.Lock()
 						defer mu.Unlock()
@@ -591,7 +605,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					return
 				}
 
-					if canonical, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
+					if canonical, _, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 						mu.Lock()
 						defer mu.Unlock()
 						if !seenAuthors[canonical] {
