@@ -326,6 +326,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			ctxData.KBImages = imageResults
+			for _, img := range imageResults {
+				log.Printf("[KB-IMAGE-DEBUG] KB Image: %s, ID: %s, Score: %.4f", img.Title, img.ID, img.Score)
+			}
 			log.Printf("[CYCLE-1] Finished Image KB retrieval (took %v)", time.Since(start))
 		}()
 	}
@@ -344,6 +347,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			ctxData.KBBooks = bookResults
+			for _, b := range bookResults {
+				log.Printf("[KB-DEBUG] KB Book: %s, ID: %s, Score: %.4f", b.Title, b.ID, b.Score)
+			}
 			log.Printf("[CYCLE-1] Finished Book KB retrieval (took %v)", time.Since(start))
 		}()
 	}
@@ -677,6 +683,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		for i, sugg := range res.Suggestions {
 			log.Printf("[DEBUG] Suggestion[%d]: Value=%s, Type=%s, Score=%.4f, Source=%s", i, sugg.Value, sugg.Type, sugg.Score, sugg.Source)
 		}
+	}
+
+	for _, b := range res.Books {
+		log.Printf("[SUGGEST-DEBUG] Returned Book: %s, ID: %s, Source: %s", b.Value, b.ID, b.Source)
 	}
 
 	return res, nil
