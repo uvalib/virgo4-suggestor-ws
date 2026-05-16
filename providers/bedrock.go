@@ -437,8 +437,8 @@ func (p *BedrockProvider) GetAuthorSuggestions(query string, customPrompt string
  2. DO NOT output any conversational text or formatting outside of the JSON block.
  3. If the query is a topic, suggest verified authors associated with that topic.
  4. Each suggestion must have a 'name' (the author name), 'reason' (a short explanation), 'facet' (canonical label), 'source' (kb or llm), and 'score' (a number).
- 5. SCORE RELAY: If you choose an author from the 'Background Research', you MUST relay their 'SCORE' exactly as provided. For authors from your internal knowledge, set 'score' to 0.0.\n  6. JSON INTEGRITY: You MUST escape any double quotes (") found within names or reasons using a backslash ( \"). This is critical for valid JSON parsing.
- 7. CANONICAL REPRESENTATION: When a name is provided in the Background Research formatted as <<Name>>, you MUST use the exact text inside the markers as the 'name' in your output for those suggestions.
+ 5. SCORE RELAY: If you choose an author from the 'Background Research', you MUST relay their 'SCORE' exactly as provided. For authors from your internal knowledge, set 'score' to 0.0.\n 6. JSON INTEGRITY: You MUST escape any double quotes (") found within names or reasons using a backslash ( \"). This is critical for valid JSON parsing.
+ 7. CANONICAL REPRESENTATION: When a name or facet is provided in the Background Research formatted as <<Value>>, you MUST use the exact text INSIDE the markers. DO NOT include the << and >> markers in your JSON output.
  8. Output MUST be ONLY the raw JSON object matching the following schema. NO PREAMBLE. NO CONVERSATION. START WITH '{' AND NOTHING ELSE.
  9. SAFETY & ABUSE: Return an empty suggestions list [] if the query:
     a) Contains insulting language, slurs, or pejoratives.
@@ -719,9 +719,30 @@ func (p *BedrockProvider) sanitizeJSON(input string) string {
 		}
 	}
 
-	// 2. Escape internal unescaped quotes in key-value pairs (Naive but effective for LLM output)
+	// 2. Fix malformed markers <<...>> that are outside or partially inside quotes
+	// Handle cases like: "facet": <<Name>> or "facet": <<"Name">> or "facet": "<<Name>>"
+	
+	// First, normalize "<<Name>>" (markers inside quotes) to "Name"
+	reMarkersInQuotes := regexp.MustCompile(`"(name|reason|facet|id)":\s*"<<([^>]*?)>>"`)
+	input = reMarkersInQuotes.ReplaceAllString(input, `"$1": "$2"`)
+
+	// Then, handle markers outside quotes: "facet": <<Name>> or "facet": <<"Name">>
+	reMarkersOutside := regexp.MustCompile(`"(name|reason|facet|id)":\s*<<([^>]*?)>>`)
+	input = reMarkersOutside.ReplaceAllStringFunc(input, func(m string) string {
+		parts := reMarkersOutside.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		key := parts[1]
+		val := parts[2]
+		// Strip any existing quotes from the value, we'll re-add them in the next step
+		val = strings.Trim(val, "\"")
+		return fmt.Sprintf("\"%s\": \"%s\"", key, val)
+	})
+
+	// 3. Escape internal unescaped quotes in key-value pairs (Naive but effective for LLM output)
 	// We handle name, reason, and facet fields specifically.
-	re := regexp.MustCompile(`"(name|reason|facet)":\s*"(.*?)"(\s*[,}])`)
+	re := regexp.MustCompile(`"(name|reason|facet|id)":\s*"(.*?)"(\s*[,}])`)
 	input = re.ReplaceAllStringFunc(input, func(m string) string {
 		parts := re.FindStringSubmatch(m)
 		if len(parts) < 4 {
