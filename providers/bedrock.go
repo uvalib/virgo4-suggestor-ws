@@ -423,7 +423,7 @@ func (p *BedrockProvider) GetAuthorSuggestions(query string, customPrompt string
  2. DIVERSITY & MIXTURE: Provide a diverse list of up to 20 suggestions. This MUST include:
     - The primary canonical author(s) mapped from the query.
     - Relevant, specific researchers/authors found in the "Background Research" hits, even if they are secondary to the main topic.
- 3. QUERY ALIGNMENT: Proactively resolve partial names (e.g., "homer" should suggest "Homer", but also include secondary Greek scholars from research hits).
+ 3. QUERY ALIGNMENT: Proactively resolve partial names.
  4. GROUNDING & FAILOVER: Even if "Background Research" is empty or contains errors, you MUST provide at least 10 canonical author suggestions based on your internal knowledge. Prioritize relevance and name similarity.
  5. ORDERING: Return the suggestions in descending order of relevance and confidence, with the most authoritative matches first.
  6. MINIMUM VIABILITY: Prioritize authors who are likely to have multiple records. Avoid extremely niche or single-match suggestions unless they are an exact match for the query.
