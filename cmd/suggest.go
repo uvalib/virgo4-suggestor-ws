@@ -57,7 +57,7 @@ type SuggestionResponse struct {
 	Authors     []Suggestion        `json:"authors"`
 	Images      []Suggestion        `json:"images"`
 	Books       []Suggestion        `json:"books"`
-	Metadata    *SuggestionMetadata `json:"metadata,omitempty"`
+	Metadata    map[string]*SuggestionMetadata `json:"metadata,omitempty"`
 }
 
 // SuggestionMetadata contains timing and token usage for the suggestion process
@@ -235,15 +235,18 @@ func (s *SuggestionContext) HandleAuthorSuggestionRequest() (*SuggestionResponse
 // HandleSuggestionRequest takes a keyword query and tries to find suggested searches
 // based on it using a parallel Context Gathering approach.
 func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, error) {
-	var fullStart time.Time
 	if s.req.Debug {
-		fullStart = time.Now()
 		log.Printf("[DEBUG] Debug flag is enabled for this request")
 	}
 	res := &SuggestionResponse{Suggestions: []Suggestion{}}
 
-	var cycle1Time, cycle2Time int64
-	var startCycle3 time.Time
+	var authorMeta, bookMeta, imageMeta, dymMeta *SuggestionMetadata
+	if s.req.Debug {
+		authorMeta = &SuggestionMetadata{}
+		bookMeta = &SuggestionMetadata{}
+		imageMeta = &SuggestionMetadata{}
+		dymMeta = &SuggestionMetadata{}
+	}
 
 	// Ensure query is parsed (though we might use the raw query for the LLM)
 	if err := s.ParseQuery(); err != nil {
@@ -261,11 +264,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	var wg sync.WaitGroup
 	// Wait for all 3 routines to finish with a suitable timeout (e.g. 3 seconds)
 	// so slow backends don't hold up the entire suggestion request.
-	var startCycle1 time.Time
-	if s.req.Debug {
-		startCycle1 = time.Now()
-	}
-	
 	// We'll run concurrent requests (KB authors and/or KB images)
 	// Determine which features are requested
 	hasImages := false
@@ -308,6 +306,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				return
 			}
 			ctxData.KBAuthors = kbResults
+			if s.req.Debug {
+				authorMeta.Cycle1TimeMS = time.Since(start).Milliseconds()
+			}
 			log.Printf("[CYCLE-1] Finished KB retrieval (took %v)", time.Since(start))
 		}()
 	}
@@ -328,6 +329,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			ctxData.KBImages = imageResults
 			for _, img := range imageResults {
 				log.Printf("[KB-IMAGE-DEBUG] KB Image: %s, ID: %s, Score: %.4f", img.Title, img.ID, img.Score)
+			}
+			if s.req.Debug {
+				imageMeta.Cycle1TimeMS = time.Since(start).Milliseconds()
 			}
 			log.Printf("[CYCLE-1] Finished Image KB retrieval (took %v)", time.Since(start))
 		}()
@@ -350,6 +354,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			for _, b := range bookResults {
 				log.Printf("[KB-DEBUG] KB Book: %s, ID: %s, Score: %.4f", b.Title, b.ID, b.Score)
 			}
+			if s.req.Debug {
+				bookMeta.Cycle1TimeMS = time.Since(start).Milliseconds()
+			}
 			log.Printf("[CYCLE-1] Finished Book KB retrieval (took %v)", time.Since(start))
 		}()
 	}
@@ -368,20 +375,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		log.Printf("[CYCLE-1] TIMEOUT! Context gathering halted after 10s. Proceeding with partial context")
 	}
 	
-	if s.req.Debug {
-		cycle1Time = time.Since(startCycle1).Milliseconds()
-	}
-
 	var candidates []Suggestion
-	var aiReqUsage providers.AIUsage
 	var dymRes *providers.AIDymResponse
 
 	if s.svc.AIProvider != nil {
-		var startCycle2 time.Time
-		if s.req.Debug {
-			startCycle2 = time.Now()
-		}
-
 		var c2wg sync.WaitGroup
 		var mu sync.Mutex
 
@@ -426,6 +423,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				c2wg.Add(1)
 				go func() {
 					defer c2wg.Done()
+					var startCycle2 time.Time
+					if s.req.Debug {
+						startCycle2 = time.Now()
+					}
 					res, err := s.svc.AIProvider.GetAuthorSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
 					if err != nil {
 						log.Printf("[CYCLE-2] ERROR: Author AI failed: %s", err.Error())
@@ -433,7 +434,24 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					}
 					mu.Lock()
 					defer mu.Unlock()
-					s.processAIResponse(res, &candidates, &aiReqUsage, ctxData)
+					var usage providers.AIUsage
+					s.processAIResponse(res, &candidates, &usage, ctxData)
+					if s.req.Debug {
+						authorMeta.Cycle2TimeMS = time.Since(startCycle2).Milliseconds()
+						if res != nil {
+							if res.InputPrompt != "" {
+								authorMeta.InputPrompt = res.InputPrompt
+							}
+							if res.RawOutput != "" {
+								authorMeta.RawOutput = res.RawOutput
+							}
+							if res.Reasoning != "" {
+								authorMeta.Reasoning = res.Reasoning
+							}
+							authorMeta.InputTokens += usage.InputTokens
+							authorMeta.OutputTokens += usage.OutputTokens
+						}
+					}
 				}()
 			}
 
@@ -442,6 +460,10 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 				c2wg.Add(1)
 				go func() {
 					defer c2wg.Done()
+					var startCycle2 time.Time
+					if s.req.Debug {
+						startCycle2 = time.Now()
+					}
 					res, err := s.svc.AIProvider.GetBookSuggestions(rawQuery, s.req.AIPrompt, ctxData, s.req.Debug)
 					if err != nil {
 						log.Printf("[CYCLE-2] ERROR: Book AI failed: %s", err.Error())
@@ -449,7 +471,24 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					}
 					mu.Lock()
 					defer mu.Unlock()
-					s.processAIResponse(res, &candidates, &aiReqUsage, ctxData)
+					var usage providers.AIUsage
+					s.processAIResponse(res, &candidates, &usage, ctxData)
+					if s.req.Debug {
+						bookMeta.Cycle2TimeMS = time.Since(startCycle2).Milliseconds()
+						if res != nil {
+							if res.InputPrompt != "" {
+								bookMeta.InputPrompt = res.InputPrompt
+							}
+							if res.RawOutput != "" {
+								bookMeta.RawOutput = res.RawOutput
+							}
+							if res.Reasoning != "" {
+								bookMeta.Reasoning = res.Reasoning
+							}
+							bookMeta.InputTokens += usage.InputTokens
+							bookMeta.OutputTokens += usage.OutputTokens
+						}
+					}
 				}()
 			}
 		}
@@ -459,10 +498,23 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			c2wg.Add(1)
 			go func() {
 				defer c2wg.Done()
+				var startCycle2 time.Time
+				if s.req.Debug {
+					startCycle2 = time.Now()
+				}
 				var err error
 				dymRes, err = s.svc.AIProvider.GetDidYouMean(rawQuery, s.req.Debug)
 				if err != nil {
 					log.Printf("[CYCLE-2] ERROR: AI DidYouMean failed: %s", err.Error())
+				}
+				if s.req.Debug {
+					dymMeta.Cycle2TimeMS = time.Since(startCycle2).Milliseconds()
+					if dymRes != nil {
+						dymMeta.InputTokens += dymRes.Usage.InputTokens
+						dymMeta.OutputTokens += dymRes.Usage.OutputTokens
+						dymMeta.InputPrompt = dymRes.InputPrompt
+						dymMeta.RawOutput = dymRes.RawOutput
+					}
 				}
 			}()
 		}
@@ -472,14 +524,9 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 		// Process DidYouMean
 		if dymRes != nil && dymRes.DidYouMean != "" && !strings.EqualFold(strings.TrimSpace(dymRes.DidYouMean), strings.TrimSpace(rawQuery)) {
 			res.DidYouMean = dymRes.DidYouMean
-			aiReqUsage.InputTokens += dymRes.Usage.InputTokens
-			aiReqUsage.OutputTokens += dymRes.Usage.OutputTokens
 			log.Printf("[CYCLE-2] AI DidYouMean produced: '%s'", res.DidYouMean)
 		}
 
-		if s.req.Debug {
-			cycle2Time = time.Since(startCycle2).Milliseconds()
-		}
 	}
 	// Fallback for Book hits if no AI results produced any books
 	if hasBooks {
@@ -523,6 +570,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 	}
 
 	if len(candidates) > 0 {
+		var startCycle3 time.Time
 		if s.req.Debug {
 			startCycle3 = time.Now()
 		}
@@ -549,6 +597,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						res.Images = append(res.Images, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
+					if s.req.Debug {
+						dur := time.Since(startCycle3).Milliseconds()
+						if dur > imageMeta.Cycle3TimeMS {
+							imageMeta.Cycle3TimeMS = dur
+						}
+					}
 					return
 				}
 
@@ -563,6 +617,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 							log.Printf("[CYCLE-3] KB BOOK: Title=%s, ID=%s, Score=%.4f (Trusted)", c.Value, c.ID, c.Score)
 							res.Books = append(res.Books, c)
 							res.Suggestions = append(res.Suggestions, c)
+						}
+						if s.req.Debug {
+							dur := time.Since(startCycle3).Milliseconds()
+							if dur > bookMeta.Cycle3TimeMS {
+								bookMeta.Cycle3TimeMS = dur
+							}
 						}
 						return
 					}
@@ -582,6 +642,14 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						}
 					} else {
 						log.Printf("[CYCLE-3] REJECTED BOOK: Title=%s (Not found in catalog)", c.Value)
+					}
+					if s.req.Debug {
+						dur := time.Since(startCycle3).Milliseconds()
+						mu.Lock()
+						if dur > bookMeta.Cycle3TimeMS {
+							bookMeta.Cycle3TimeMS = dur
+						}
+						mu.Unlock()
 					}
 					return
 				}
@@ -608,6 +676,12 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						res.Authors = append(res.Authors, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
+					if s.req.Debug {
+						dur := time.Since(startCycle3).Milliseconds()
+						if dur > authorMeta.Cycle3TimeMS {
+							authorMeta.Cycle3TimeMS = dur
+						}
+					}
 					return
 				}
 
@@ -622,6 +696,14 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 						res.Authors = append(res.Authors, c)
 						res.Suggestions = append(res.Suggestions, c)
 					}
+					}
+					if s.req.Debug {
+						dur := time.Since(startCycle3).Milliseconds()
+						mu.Lock()
+						if dur > authorMeta.Cycle3TimeMS {
+							authorMeta.Cycle3TimeMS = dur
+						}
+						mu.Unlock()
 					}
 			}(cand)
 		}
@@ -659,20 +741,31 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 			}
 		}
 
-		res.Metadata = &SuggestionMetadata{
-			TotalTimeMS:  time.Since(fullStart).Milliseconds(),
-			Cycle1TimeMS: cycle1Time,
-			Cycle2TimeMS: cycle2Time,
-			Cycle3TimeMS: 0,
-			InputTokens:  aiReqUsage.InputTokens,
-			OutputTokens: aiReqUsage.OutputTokens,
-			CostPer1K:    calculateCostPer1K(modelUsed, aiReqUsage.InputTokens, aiReqUsage.OutputTokens),
-			Model:        modelUsed,
+		res.Metadata = make(map[string]*SuggestionMetadata)
+
+		if hasAuthor {
+			authorMeta.Model = modelUsed
+			authorMeta.CostPer1K = calculateCostPer1K(modelUsed, authorMeta.InputTokens, authorMeta.OutputTokens)
+			authorMeta.TotalTimeMS = authorMeta.Cycle1TimeMS + authorMeta.Cycle2TimeMS + authorMeta.Cycle3TimeMS
+			res.Metadata["authors"] = authorMeta
 		}
-		// Note: Metadata now represents the aggregate of all parallel LLM calls.
-		// Detailed per-call debug info (prompts/output) is omitted for brevity in combined mode.
-		if !startCycle3.IsZero() {
-			res.Metadata.Cycle3TimeMS = time.Since(startCycle3).Milliseconds()
+		if hasBooks {
+			bookMeta.Model = modelUsed
+			bookMeta.CostPer1K = calculateCostPer1K(modelUsed, bookMeta.InputTokens, bookMeta.OutputTokens)
+			bookMeta.TotalTimeMS = bookMeta.Cycle1TimeMS + bookMeta.Cycle2TimeMS + bookMeta.Cycle3TimeMS
+			res.Metadata["books"] = bookMeta
+		}
+		if hasImages {
+			imageMeta.Model = modelUsed
+			imageMeta.CostPer1K = calculateCostPer1K(modelUsed, imageMeta.InputTokens, imageMeta.OutputTokens)
+			imageMeta.TotalTimeMS = imageMeta.Cycle1TimeMS + imageMeta.Cycle2TimeMS + imageMeta.Cycle3TimeMS
+			res.Metadata["images"] = imageMeta
+		}
+		if hasDidYouMean {
+			dymMeta.Model = modelUsed
+			dymMeta.CostPer1K = calculateCostPer1K(modelUsed, dymMeta.InputTokens, dymMeta.OutputTokens)
+			dymMeta.TotalTimeMS = dymMeta.Cycle1TimeMS + dymMeta.Cycle2TimeMS + dymMeta.Cycle3TimeMS
+			res.Metadata["didyoumean"] = dymMeta
 		}
 	}
 
