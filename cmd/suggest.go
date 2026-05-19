@@ -631,7 +631,6 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 					// and ensure they actually exist in the catalog.
 					if canonical, id, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 						mu.Lock()
-						defer mu.Unlock()
 						if !seenAuthors[canonical] {
 							seenAuthors[canonical] = true
 							c.Value = canonical
@@ -640,6 +639,7 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 							res.Books = append(res.Books, c)
 							res.Suggestions = append(res.Suggestions, c)
 						}
+						mu.Unlock()
 					} else {
 						log.Printf("[CYCLE-3] REJECTED BOOK: Title=%s (Not found in catalog)", c.Value)
 					}
@@ -687,15 +687,15 @@ func (s *SuggestionContext) HandleSuggestionRequest() (*SuggestionResponse, erro
 
 					if canonical, _, ok := s.verifySuggestionResults(c.Value, c.Type); ok {
 						mu.Lock()
-						defer mu.Unlock()
 						if !seenAuthors[canonical] {
-						seenAuthors[canonical] = true
-						c.Value = canonical // Replace candidate with exact catalog string
-						c.Facet = canonical // Populate link facet with exact catalog string
-						log.Printf("[CYCLE-3] VERIFIED: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
-						res.Authors = append(res.Authors, c)
-						res.Suggestions = append(res.Suggestions, c)
-					}
+							seenAuthors[canonical] = true
+							c.Value = canonical // Replace candidate with exact catalog string
+							c.Facet = canonical // Populate link facet with exact catalog string
+							log.Printf("[CYCLE-3] VERIFIED: Name=%s, Source=%s, Score=%.4f", c.Value, c.Source, c.Score)
+							res.Authors = append(res.Authors, c)
+							res.Suggestions = append(res.Suggestions, c)
+						}
+						mu.Unlock()
 					}
 					if s.req.Debug {
 						dur := time.Since(startCycle3).Milliseconds()
